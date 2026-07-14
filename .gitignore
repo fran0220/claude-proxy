@@ -1,0 +1,6 @@
+/claude-proxy
+/ClaudeProxy.app
+*.db
+*.db-shm
+*.db-wal
+.DS_Store

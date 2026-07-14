@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Proxy</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">C</div>
+      <div>
+        <div class="brand-title">Claude Proxy</div>
+        <div class="brand-subtitle">local API + stats</div>
+      </div>
+    </div>
+    <button class="nav active" data-page="overview">Overview</button>
+    <button class="nav" data-page="logs">Logs</button>
+    <button class="nav" data-page="stats">Stats</button>
+    <button class="nav" data-page="models">Models</button>
+    <button class="nav" data-page="settings">Settings</button>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="page-title">Overview</h1>
+        <p id="page-subtitle">Claude-only proxy status</p>
+      </div>
+      <div class="top-actions">
+        <span id="status-pill" class="pill">loading</span>
+        <button id="refresh-btn" class="btn">Refresh</button>
+      </div>
+    </header>
+    <section id="app" class="content"></section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
