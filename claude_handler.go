@@ -33,7 +33,7 @@ func NewClaudeHandler(cfg *Config, retryer *Retryer, logger *RequestLogger) *Cla
 	}
 }
 
-func (h *ClaudeHandler) Handle(w http.ResponseWriter, r *http.Request, body []byte, auth *ProviderAuth) {
+func (h *ClaudeHandler) Handle(w http.ResponseWriter, r *http.Request, body []byte, auth *ProviderAuth, logID string) {
 	base := anthropicAPIBase
 	if auth.BaseURL != "" {
 		base = strings.TrimRight(auth.BaseURL, "/")
@@ -83,7 +83,7 @@ func (h *ClaudeHandler) Handle(w http.ResponseWriter, r *http.Request, body []by
 
 	if isStream && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		usage := h.streamResponsePassthrough(w, resp.Body, renameTools)
-		h.logger.RecordResult(model, resp.StatusCode, usage, 0, "", "", "")
+		h.logger.RecordResultID(logID, model, resp.StatusCode, usage, 0, "", "", "")
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *ClaudeHandler) Handle(w http.ResponseWriter, r *http.Request, body []by
 	if resp.StatusCode >= 400 {
 		errMsg = gjson.GetBytes(respBody, "error.message").String()
 	}
-	h.logger.RecordResult(model, resp.StatusCode, usage, 0, errMsg, "", string(respBody))
+	h.logger.RecordResultID(logID, model, resp.StatusCode, usage, 0, errMsg, "", string(respBody))
 }
 
 func applyDirectClaudeHeaders(req *http.Request, original *http.Request, auth *ProviderAuth, stream bool) {

@@ -25,8 +25,21 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }
 function num(v) { return Number(v || 0).toLocaleString(); }
+function money(v) {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 100) return `$${n.toFixed(0)}`;
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n > 0) return `$${n.toFixed(4)}`;
+  return '$0.00';
+}
 function routePill(route) { return `<span class="pill ${route === 'apikey' ? 'warn' : 'good'}">${esc(route || 'local')}</span>`; }
 function setPageMeta(title, subtitle) { pageTitle.textContent = title; pageSubtitle.textContent = subtitle; }
+function rangeButtons(active) {
+  return ['24h','7d','30d','all'].map(r =>
+    `<button class="range-btn ${r === active ? 'active' : ''}" onclick="setUsageRange('${r}')">${r === 'all' ? 'All' : r}</button>`
+  ).join('');
+}
 
 async function refreshStatus() {
   try {
@@ -59,14 +72,16 @@ async function renderOverview() {
   setPageMeta('Overview', 'Proxy status, auth, and recent Claude usage');
   const o = await API.get('/api/overview');
   const s = o.stats || {};
+  const u = o.usage_24h || {};
+  const totals = u.totals || {};
   const p = o.provider || {};
   const auth = p.auth || {};
   app.innerHTML = `
     <div class="grid cols-4">
-      ${metric('Requests', s.total_requests)}
-      ${metric('Errors', s.total_errors)}
-      ${metric('Input tokens', s.total_logical_input_tokens || s.total_input_tokens)}
-      ${metric('Output tokens', s.total_output_tokens)}
+      ${metric('Last 24h cost', money(totals.cost_usd), 'equivalent API $')}
+      ${metric('Last 24h requests', totals.requests || 0)}
+      ${metric('All-time requests', s.total_requests)}
+      ${metric('All-time errors', s.total_errors)}
     </div>
     <div class="grid cols-2" style="margin-top:14px">
       <div class="card">
@@ -89,64 +104,115 @@ async function renderOverview() {
     </div>`;
 }
 
-function metric(label, value) {
-  return `<div class="card"><div class="label">${esc(label)}</div><div class="metric">${num(value)}</div></div>`;
+function metric(label, value, hint) {
+  const display = typeof value === 'string' ? value : num(value);
+  return `<div class="card"><div class="label">${esc(label)}</div><div class="metric">${display}</div>${hint ? `<div class="muted">${esc(hint)}</div>` : ''}</div>`;
 }
 
 async function renderLogs() {
   setPageMeta('Logs', 'Recent proxied Claude API calls');
-  const logs = await API.get('/api/logs?limit=100');
-  app.innerHTML = `<div class="card"><div class="split"><h2>Request logs</h2><button onclick="render()">Refresh</button></div>${logsTable(logs || [])}</div>`;
+  const logs = await API.get('/api/logs?limit=100&range=' + encodeURIComponent(usageRange));
+  app.innerHTML = `<div class="card"><div class="split"><h2>Request logs</h2><div class="actions"><div class="range-group">${rangeButtons(usageRange)}</div><button onclick="render()">Refresh</button></div></div>${logsTable(logs || [])}</div>`;
 }
 
 function logsTable(logs) {
   if (!logs.length) return '<p class="muted">No logs yet.</p>';
-  return `<table><thead><tr><th>Time</th><th>Model</th><th>Route</th><th>Status</th><th>Tokens</th><th>Latency</th><th>Error</th></tr></thead><tbody>` + logs.map(l => {
+  return `<table><thead><tr><th>Time</th><th>Model</th><th>Route</th><th>Status</th><th>Tokens</th><th>Cost</th><th>Latency</th><th>Error</th></tr></thead><tbody>` + logs.map(l => {
     const tokens = (l.tokens || {});
     const total = (tokens.input_tokens || 0) + (tokens.output_tokens || 0) + (tokens.cache_read_tokens || 0) + (tokens.cache_create_tokens || 0);
+    const cost = l.priced === 'unpriced' ? '<span class="muted">unpriced</span>' : money(l.cost_usd);
     return `<tr>
       <td>${esc(new Date(l.timestamp).toLocaleString())}</td>
       <td><code>${esc(l.model)}</code></td>
       <td>${esc(l.route)}</td>
       <td>${Number(l.status) >= 400 ? '<span class="pill bad">' + esc(l.status) + '</span>' : '<span class="pill good">' + esc(l.status || '-') + '</span>'}</td>
       <td>${num(total)}</td>
-      <td>${esc(l.latency || '')}</td>
+      <td>${cost}</td>
+      <td>${esc(formatLatency(l.latency))}</td>
       <td class="error">${esc(l.error || '')}</td>
     </tr>`;
   }).join('') + '</tbody></table>';
 }
 
-async function renderStats() {
-  setPageMeta('Stats', 'Token totals and per-model breakdown');
-  const [stats, daily, routes, totals] = await Promise.all([
-    API.get('/api/stats'), API.get('/api/stats/daily?days=30'), API.get('/api/stats/routes'), API.get('/api/stats/tokens')
-  ]);
-  const models = Object.values(stats.by_model || {}).sort((a,b) => (b.total_tokens || 0) - (a.total_tokens || 0));
-  app.innerHTML = `
-    <div class="grid cols-4">
-      ${metric('Total tokens', totals.total_tokens || stats.total_tokens)}
-      ${metric('Fresh input', totals.fresh_input || stats.total_fresh_input_tokens)}
-      ${metric('Cache read', totals.cache_read || stats.total_cache_read_tokens)}
-      ${metric('Cache create', totals.cache_create || stats.total_cache_create_tokens)}
-    </div>
-    <div class="grid cols-2" style="margin-top:14px">
-      <div class="card"><h2>Routes</h2>${routesTable(routes || [])}</div>
-      <div class="card"><h2>Last 30 days</h2>${dailyTable(daily || [])}</div>
-    </div>
-    <div class="card" style="margin-top:14px"><h2>By model</h2>${modelsTable(models)}</div>`;
+function formatLatency(v) {
+  if (v == null || v === '') return '';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (n >= 1e9) return Math.round(n / 1e6) + 'ms';
+  if (n >= 1e6) return Math.round(n / 1e6) + 'ms';
+  return n + 'ms';
 }
 
-function routesTable(rows) {
+let usageRange = '24h';
+
+async function renderStats() {
+  setPageMeta('Stats', 'Token and equivalent API cost by time window');
+  const usage = await API.get('/api/usage?range=' + encodeURIComponent(usageRange));
+  const totals = usage.totals || {};
+  const tokens = totals.tokens || {};
+  const pricing = usage.pricing || {};
+  const fetched = pricing.fetched_at ? new Date(pricing.fetched_at).toLocaleString() : 'never';
+  app.innerHTML = `
+    <div class="split" style="margin-bottom:14px">
+      <div class="range-group">${rangeButtons(usageRange)}</div>
+      <div class="actions">
+        <span class="muted">models.dev ${pricing.stale ? 'stale' : 'ok'} · ${esc(fetched)}</span>
+        <button onclick="refreshPrices()">Refresh prices</button>
+      </div>
+    </div>
+    <div class="grid cols-4">
+      ${metric('Cost', money(totals.cost_usd), 'equivalent API $')}
+      ${metric('Requests', totals.requests || 0)}
+      ${metric('Input tokens', tokens.input || 0)}
+      ${metric('Output tokens', tokens.output || 0)}
+    </div>
+    <div class="grid cols-4" style="margin-top:14px">
+      ${metric('Cache read', tokens.cache_read || 0, money((totals.cost_by_component || {}).cache_read))}
+      ${metric('Cache write', tokens.cache_create || 0, money((totals.cost_by_component || {}).cache_write))}
+      ${metric('Local equivalent', money(totals.cost_local_usd), 'not a subscription bill')}
+      ${metric('API key', money(totals.cost_apikey_usd))}
+    </div>
+    ${totals.unpriced_models && totals.unpriced_models.length ? `<div class="notice" style="margin-top:14px">Unpriced models: ${totals.unpriced_models.map(esc).join(', ')}</div>` : ''}
+    <div class="grid cols-2" style="margin-top:14px">
+      <div class="card"><h2>By route</h2>${usageRoutesTable(usage.by_route || [])}</div>
+      <div class="card"><h2>${usage.granularity === 'hour' ? 'By hour' : 'By day'}</h2>${usageSeriesTable(usage.series || [])}</div>
+    </div>
+    <div class="card" style="margin-top:14px"><h2>By model</h2>${usageModelsTable(usage.by_model || [])}</div>`;
+}
+
+function usageRoutesTable(rows) {
   if (!rows.length) return '<p class="muted">No route stats.</p>';
-  return `<table><thead><tr><th>Route</th><th>Requests</th><th>Tokens</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.route)}</td><td>${num(r.requests)}</td><td>${num(r.total_tokens)}</td></tr>`).join('')}</tbody></table>`;
+  return `<table><thead><tr><th>Route</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr>
+    <td>${esc(r.route)}${r.equivalent ? ' <span class="pill warn">equivalent</span>' : ''}</td>
+    <td>${num(r.requests)}</td>
+    <td>${num((r.tokens || {}).total)}</td>
+    <td>${money(r.cost_usd)}</td>
+  </tr>`).join('')}</tbody></table>`;
 }
-function dailyTable(rows) {
-  if (!rows.length) return '<p class="muted">No daily stats.</p>';
-  return `<table><thead><tr><th>Day</th><th>Requests</th><th>Tokens</th></tr></thead><tbody>${rows.slice(-10).map(r => `<tr><td>${esc(r.day)}</td><td>${num(r.requests)}</td><td>${num(r.total_tokens)}</td></tr>`).join('')}</tbody></table>`;
+function usageSeriesTable(rows) {
+  if (!rows.length) return '<p class="muted">No usage in this window.</p>';
+  return `<table><thead><tr><th>When</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr>
+    <td>${esc(r.bucket)}</td>
+    <td>${num(r.requests)}</td>
+    <td>${num(r.tokens)}</td>
+    <td>${money(r.cost_usd)}</td>
+  </tr>`).join('')}</tbody></table>`;
 }
-function modelsTable(rows) {
+function usageModelsTable(rows) {
   if (!rows.length) return '<p class="muted">No model stats.</p>';
-  return `<table><thead><tr><th>Model</th><th>Requests</th><th>Errors</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody>${rows.map(m => `<tr><td><code>${esc(m.model)}</code></td><td>${num(m.total_requests)}</td><td>${num(m.total_errors)}</td><td>${num(m.total_logical_input_tokens || m.total_input_tokens)}</td><td>${num(m.total_output_tokens)}</td><td>${num(m.total_tokens)}</td></tr>`).join('')}</tbody></table>`;
+  return `<table><thead><tr><th>Model</th><th>Requests</th><th>Input</th><th>Output</th><th>Cache</th><th>Cost</th><th></th></tr></thead><tbody>${rows.map(m => {
+    const t = m.tokens || {};
+    const priced = m.priced === 'unpriced' ? '<span class="pill warn">unpriced</span>' : (m.priced === 'estimated' ? '<span class="pill">est.</span>' : '');
+    return `<tr>
+      <td><code>${esc(m.model)}</code></td>
+      <td>${num(m.requests)}</td>
+      <td>${num(t.input)}</td>
+      <td>${num(t.output)}</td>
+      <td>${num((t.cache_read || 0) + (t.cache_create || 0))}</td>
+      <td>${m.priced === 'unpriced' ? '—' : money(m.cost_usd)}</td>
+      <td>${priced}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
 }
 
 async function renderModels() {
@@ -243,6 +309,16 @@ function redirectsTable(redirs) {
 }
 
 async function switchPage(page) { currentPage = page; await render(); }
+async function setUsageRange(range) { usageRange = range; await render(); }
+async function refreshPrices() {
+  try {
+    await API.post('/api/prices/refresh', {});
+  } catch (err) {
+    app.innerHTML = `<div class="card error"><strong>Price refresh failed:</strong><pre>${esc(err.message || err)}</pre></div>`;
+    return;
+  }
+  await render();
+}
 async function discoverModels(route) {
   const el = document.getElementById('discover-result');
   if (el) el.innerHTML = '<p class="muted">Discovering...</p>';
@@ -306,6 +382,8 @@ function val(id) { return (document.getElementById(id)?.value || '').trim(); }
 document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
 document.getElementById('refresh-btn').addEventListener('click', render);
 window.switchPage = switchPage;
+window.setUsageRange = setUsageRange;
+window.refreshPrices = refreshPrices;
 window.discoverModels = discoverModels;
 window.addModel = addModel;
 window.removeModel = removeModel;

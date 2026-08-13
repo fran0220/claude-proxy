@@ -22,6 +22,11 @@ type RequestLog struct {
 	RequestBody  string        `json:"request_body,omitempty"`
 	ResponseBody string        `json:"response_body,omitempty"`
 	Retries      int           `json:"retries,omitempty"`
+	CacheTTL     string        `json:"cache_ttl,omitempty"`
+	Price        ModelPrice    `json:"price,omitempty"`
+	PriceSource  string        `json:"price_source,omitempty"`
+	Priced       string        `json:"priced,omitempty"`
+	CostUSD      *float64      `json:"cost_usd"`
 }
 
 type TokenUsage struct {
@@ -42,8 +47,10 @@ type ModelStats struct {
 	TotalCacheCreate  int64  `json:"total_cache_create_tokens"`
 	TotalDirectInput  int64  `json:"total_direct_input_tokens"`
 	TotalFreshInput   int64  `json:"total_fresh_input_tokens"`
-	TotalLogicalInput int64  `json:"total_logical_input_tokens"`
-	TotalTokens       int64  `json:"total_tokens"`
+	TotalLogicalInput int64    `json:"total_logical_input_tokens"`
+	TotalTokens       int64    `json:"total_tokens"`
+	CostUSD           *float64 `json:"cost_usd"`
+	UnpricedTokens    int64    `json:"unpriced_tokens,omitempty"`
 }
 
 type RequestStats struct {
@@ -57,6 +64,8 @@ type RequestStats struct {
 	TotalFreshInputTokens   int64                  `json:"total_fresh_input_tokens"`
 	TotalLogicalInputTokens int64                  `json:"total_logical_input_tokens"`
 	TotalTokens             int64                  `json:"total_tokens"`
+	CostUSD                 *float64               `json:"cost_usd"`
+	UnpricedTokens          int64                  `json:"unpriced_tokens,omitempty"`
 	Uptime                  string                 `json:"uptime"`
 	ByModel                 map[string]*ModelStats `json:"by_model"`
 }
@@ -71,8 +80,10 @@ type DayStats struct {
 	CacheCreateTokens  int64  `json:"cache_create_tokens"`
 	DirectInputTokens  int64  `json:"direct_input_tokens"`
 	FreshInputTokens   int64  `json:"fresh_input_tokens"`
-	LogicalInputTokens int64  `json:"logical_input_tokens"`
-	TotalTokens        int64  `json:"total_tokens"`
+	LogicalInputTokens int64    `json:"logical_input_tokens"`
+	TotalTokens        int64    `json:"total_tokens"`
+	CostUSD            *float64 `json:"cost_usd"`
+	UnpricedTokens     int64    `json:"unpriced_tokens,omitempty"`
 }
 
 type HourStats struct {
@@ -84,8 +95,10 @@ type HourStats struct {
 	CacheCreateTokens  int64  `json:"cache_create_tokens"`
 	DirectInputTokens  int64  `json:"direct_input_tokens"`
 	FreshInputTokens   int64  `json:"fresh_input_tokens"`
-	LogicalInputTokens int64  `json:"logical_input_tokens"`
-	TotalTokens        int64  `json:"total_tokens"`
+	LogicalInputTokens int64    `json:"logical_input_tokens"`
+	TotalTokens        int64    `json:"total_tokens"`
+	CostUSD            *float64 `json:"cost_usd"`
+	UnpricedTokens     int64    `json:"unpriced_tokens,omitempty"`
 }
 
 type RouteStats struct {
@@ -97,8 +110,10 @@ type RouteStats struct {
 	CacheCreateTokens  int64  `json:"cache_create_tokens"`
 	DirectInputTokens  int64  `json:"direct_input_tokens"`
 	FreshInputTokens   int64  `json:"fresh_input_tokens"`
-	LogicalInputTokens int64  `json:"logical_input_tokens"`
-	TotalTokens        int64  `json:"total_tokens"`
+	LogicalInputTokens int64    `json:"logical_input_tokens"`
+	TotalTokens        int64    `json:"total_tokens"`
+	CostUSD            *float64 `json:"cost_usd"`
+	UnpricedTokens     int64    `json:"unpriced_tokens,omitempty"`
 }
 
 type StatsFilter struct {
@@ -117,64 +132,79 @@ type TokenTotals struct {
 	CacheTotal   int64 `json:"cache_total"`
 	DirectInput  int64 `json:"direct_input"`
 	FreshInput   int64 `json:"fresh_input"`
-	LogicalInput int64 `json:"logical_input"`
-	TotalTokens  int64 `json:"total_tokens"`
-	Total        int64 `json:"total"`
+	LogicalInput int64    `json:"logical_input"`
+	TotalTokens  int64    `json:"total_tokens"`
+	Total        int64    `json:"total"`
+	CostUSD      *float64 `json:"cost_usd"`
+	UnpricedTokens int64  `json:"unpriced_tokens,omitempty"`
 }
 
 // RequestLogger provides logging with SQLite persistence and a short-lived stats cache.
 type RequestLogger struct {
 	store     *DBStore
+	prices    *PriceCatalog
 	startTime time.Time
 
 	// Pending entries: LogRequest creates a partial entry, RecordResult completes it.
 	mu      sync.Mutex
-	pending map[string]*RequestLog // keyed by "model|path|route"
+	pending map[string]*RequestLog // keyed by request id
 }
 
 func NewRequestLogger(dataDir string) *RequestLogger {
+	return NewRequestLoggerWithPrices(dataDir, nil)
+}
+
+func NewRequestLoggerWithPrices(dataDir string, prices *PriceCatalog) *RequestLogger {
 	store, err := NewDBStore(dataDir)
 	if err != nil {
 		log.Errorf("failed to open database, stats will not persist: %v", err)
 	}
 	return &RequestLogger{
 		store:     store,
+		prices:    prices,
 		startTime: time.Now(),
 		pending:   make(map[string]*RequestLog),
 	}
 }
 
+func (rl *RequestLogger) SetPrices(prices *PriceCatalog) {
+	rl.prices = prices
+}
+
 // LogRequest records the start of a request. The entry is held in memory
 // until RecordResult completes it with status/tokens, then written to DB.
-func (rl *RequestLogger) LogRequest(model, provider, route, path string, start time.Time) {
+func (rl *RequestLogger) LogRequest(model, provider, route, path string, start time.Time) string {
+	return rl.LogRequestWithCache(model, provider, route, path, start, "")
+}
+
+func (rl *RequestLogger) LogRequestWithCache(model, provider, route, path string, start time.Time, cacheTTL string) string {
+	id := uuid.New().String()[:8]
 	entry := &RequestLog{
-		ID:        uuid.New().String()[:8],
+		ID:        id,
 		Timestamp: start,
 		Model:     model,
 		Provider:  provider,
 		Route:     route,
 		Path:      path,
+		CacheTTL:  normalizeCacheTTL(cacheTTL),
 		Latency:   time.Since(start),
 	}
 
 	rl.mu.Lock()
-	rl.pending[pendingKey(model, path, route)] = entry
+	rl.pending[id] = entry
 	rl.mu.Unlock()
+	return id
 }
 
 // RecordResult completes a pending request entry with status, tokens, and error,
 // then writes the full record to SQLite.
 func (rl *RequestLogger) RecordResult(model string, status int, tokens TokenUsage, retries int, errMsg string, reqBody, respBody string) {
+	rl.RecordResultID("", model, status, tokens, retries, errMsg, reqBody, respBody)
+}
+
+func (rl *RequestLogger) RecordResultID(id, model string, status int, tokens TokenUsage, retries int, errMsg string, reqBody, respBody string) {
 	rl.mu.Lock()
-	// Try to find and remove the pending entry
-	var entry *RequestLog
-	for key, e := range rl.pending {
-		if e.Model == model {
-			entry = e
-			delete(rl.pending, key)
-			break
-		}
-	}
+	entry := rl.takePendingLocked(id, model)
 	rl.mu.Unlock()
 
 	if entry == nil {
@@ -190,10 +220,12 @@ func (rl *RequestLogger) RecordResult(model string, status int, tokens TokenUsag
 	entry.Tokens = tokens
 	entry.Retries = retries
 	entry.Error = errMsg
+	entry.Latency = time.Since(entry.Timestamp)
 	if status >= 400 || errMsg != "" {
 		entry.RequestBody = truncateLog(reqBody, 4096)
 		entry.ResponseBody = truncateLog(respBody, 4096)
 	}
+	rl.applyPricing(entry)
 
 	if rl.store != nil {
 		if err := rl.store.InsertLog(*entry); err != nil {
@@ -213,12 +245,13 @@ func (rl *RequestLogger) FlushPending() {
 		}
 	}
 	for _, e := range pending {
-		delete(rl.pending, pendingKey(e.Model, e.Path, e.Route))
+		delete(rl.pending, e.ID)
 	}
 	rl.mu.Unlock()
 
 	if rl.store != nil {
 		for _, e := range pending {
+			rl.applyPricing(e)
 			_ = rl.store.InsertLog(*e)
 		}
 	}
@@ -237,10 +270,14 @@ func (rl *RequestLogger) GetLogs(limit, offset int) []RequestLog {
 }
 
 func (rl *RequestLogger) GetLogsFiltered(limit, offset int, provider, route string, minStatus int) []RequestLog {
+	return rl.GetLogsFilteredRange(limit, offset, provider, route, minStatus, time.Time{}, time.Time{})
+}
+
+func (rl *RequestLogger) GetLogsFilteredRange(limit, offset int, provider, route string, minStatus int, since, until time.Time) []RequestLog {
 	if rl.store == nil {
 		return nil
 	}
-	logs, err := rl.store.QueryLogsFiltered(limit, offset, provider, route, minStatus)
+	logs, err := rl.store.QueryLogsFiltered(limit, offset, provider, route, minStatus, since, until)
 	if err != nil {
 		log.Warnf("db query filtered logs: %v", err)
 		return nil
@@ -351,8 +388,66 @@ func (rl *RequestLogger) GetTokenTotalsFiltered(filter StatsFilter) TokenTotals 
 	return t
 }
 
-func pendingKey(model, path, route string) string {
-	return model + "|" + path + "|" + route
+func (rl *RequestLogger) takePendingLocked(id, model string) *RequestLog {
+	if id != "" {
+		if e, ok := rl.pending[id]; ok {
+			delete(rl.pending, id)
+			return e
+		}
+	}
+	var oldest *RequestLog
+	for _, e := range rl.pending {
+		if e.Model != model {
+			continue
+		}
+		if oldest == nil || e.Timestamp.Before(oldest.Timestamp) {
+			oldest = e
+		}
+	}
+	if oldest != nil {
+		delete(rl.pending, oldest.ID)
+	}
+	return oldest
+}
+
+func (rl *RequestLogger) applyPricing(entry *RequestLog) {
+	if entry == nil {
+		return
+	}
+	if isCountTokensPath(entry.Path) || (entry.Status >= 400 && entry.Tokens.Total() == 0) {
+		entry.PriceSource = PriceSourceUnpriced
+		entry.Priced = "none"
+		zero := 0.0
+		entry.CostUSD = &zero
+		return
+	}
+	if rl.prices == nil {
+		entry.PriceSource = PriceSourceUnpriced
+		if entry.Tokens.Total() > 0 {
+			entry.Priced = "unpriced"
+		} else {
+			entry.Priced = "none"
+			zero := 0.0
+			entry.CostUSD = &zero
+		}
+		return
+	}
+	price, source := rl.prices.Snapshot(entry.Model, entry.CacheTTL)
+	entry.PriceSource = source
+	if source == PriceSourceUnpriced {
+		if entry.Tokens.Total() > 0 {
+			entry.Priced = "unpriced"
+		} else {
+			entry.Priced = "none"
+			zero := 0.0
+			entry.CostUSD = &zero
+		}
+		return
+	}
+	entry.Price = price
+	cost := TokenCostUSD(entry.Tokens, price)
+	entry.CostUSD = &cost
+	entry.Priced = "snapshot"
 }
 
 func truncateLog(s string, maxLen int) string {

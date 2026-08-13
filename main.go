@@ -24,23 +24,43 @@ func main() {
 	log.Infof("claude-proxy starting on %s (admin %s)", cfg.Listen, cfg.AdminListen)
 
 	tokenMgr := NewTokenManager()
-	logger := NewRequestLogger(cfg.DataDirPath())
+	prices := NewPriceCatalog(cfg.DataDirPath(), cfg)
+	if err := prices.LoadDisk(); err != nil {
+		log.Warnf("failed to load cached prices: %v", err)
+	}
+	logger := NewRequestLoggerWithPrices(cfg.DataDirPath(), prices)
 	defer logger.Close()
 
 	authResolver := NewClaudeAuthResolver(cfg, tokenMgr)
 	router := NewClaudeRouter(cfg, logger, authResolver)
-	admin := NewAdminServer(cfg, tokenMgr, logger, authResolver)
+	admin := NewAdminServer(cfg, tokenMgr, logger, prices, authResolver)
 
 	go admin.Start(cfg.AdminListen)
 
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		if err := prices.Refresh(ctx); err != nil {
+			log.Warnf("initial price refresh failed: %v", err)
+		}
+	}()
+
 	flushStop := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		flushTicker := time.NewTicker(30 * time.Second)
+		priceTicker := time.NewTicker(6 * time.Hour)
+		defer flushTicker.Stop()
+		defer priceTicker.Stop()
 		for {
 			select {
-			case <-ticker.C:
+			case <-flushTicker.C:
 				logger.FlushPending()
+			case <-priceTicker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+				if err := prices.Refresh(ctx); err != nil {
+					log.Warnf("scheduled price refresh failed: %v", err)
+				}
+				cancel()
 			case <-flushStop:
 				return
 			}

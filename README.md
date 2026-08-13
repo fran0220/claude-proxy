@@ -9,8 +9,9 @@ Claude-only local reverse proxy with Claude Code OAuth/API-key authentication, r
   - `POST /v1/messages/count_tokens`
 - Uses Claude Code OAuth credentials from macOS Keychain by default.
 - Can fall back to configured Anthropic API keys.
-- Records request logs and token usage into SQLite.
-- Provides an embedded dashboard for overview, logs, stats, models, API keys, redirects, and token refresh.
+- Records request logs and token usage into SQLite, including a per-request price snapshot.
+- Estimates equivalent Anthropic API cost from [models.dev](https://models.dev) list prices (`input` / `output` / `cache_read` / `cache_write`).
+- Provides an embedded dashboard for overview, logs, 24h/7d/30d/all usage, models, API keys, redirects, and token refresh.
 - Shows a macOS status bar icon with auth/model/stats/last-request status and quick actions.
 - Dynamically discovers available Claude models via Anthropic `GET /v1/models`.
 
@@ -113,7 +114,13 @@ model-redirects:
 retry:
   max-attempts: 5
   initial-delay: 1s
+
+pricing:
+  timezone: "" # empty uses the host local timezone for daily/hourly buckets
+  overrides: {} # optional model id -> {input, output, cache_read, cache_write} USD / 1M tokens
 ```
+
+Usage windows are rolling (`24h`, `7d`, `30d`, `all`). Costs are equivalent official API dollars, not Claude Code subscription spend. Local/Keychain traffic is labeled as equivalent. Unpriced models stay `null` instead of `$0`. New requests snapshot the current catalog rate so later price changes do not rewrite history.
 
 Unknown model IDs are allowed and default to the configured default route. The model list is for dashboard/config convenience, not a hard whitelist.
 
@@ -148,6 +155,9 @@ GET  /api/stats/daily?days=30
 GET  /api/stats/hourly?hours=24
 GET  /api/stats/routes
 GET  /api/stats/tokens
+GET  /api/usage?range=24h
+GET  /api/prices
+POST /api/prices/refresh
 GET  /api/logs?limit=100
 GET  /api/logs/errors
 GET  /api/auth/status

@@ -117,9 +117,14 @@ func refreshTray(cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestL
 	items.mAuth.SetTitle(formatAuthStatus(authStatus))
 	items.mModels.SetTitle(formatModelsStatus(cfg))
 
-	stats := logger.GetStatsFiltered(StatsFilter{Provider: "anthropic"})
-	items.mStats.SetTitle(fmt.Sprintf("Stats: %d reqs | %d errors | %s tokens",
-		stats.TotalRequests, stats.TotalErrors, fmtTokensTray(stats.TotalTokens)))
+	filter, rng := applyUsageRange(StatsFilter{Provider: "anthropic"}, "24h", time.Now())
+	usage := logger.GetUsage(filter, rng, cfg.TimeLocation())
+	cost := 0.0
+	if usage.Totals.CostUSD != nil {
+		cost = *usage.Totals.CostUSD
+	}
+	items.mStats.SetTitle(fmt.Sprintf("24h: %d reqs | %s | %s tokens",
+		usage.Totals.Requests, fmtUSDTray(cost), fmtTokensTray(usage.Totals.Tokens.Total)))
 
 	logs := logger.GetLogsFiltered(1, 0, "anthropic", "", 0)
 	if len(logs) == 0 {
@@ -247,6 +252,16 @@ func localURL(addr string) string {
 		return "http://localhost:" + strings.TrimPrefix(addr, "[::]:")
 	}
 	return "http://" + addr
+}
+
+func fmtUSDTray(n float64) string {
+	if n >= 100 {
+		return fmt.Sprintf("$%.0f", n)
+	}
+	if n >= 1 {
+		return fmt.Sprintf("$%.2f", n)
+	}
+	return fmt.Sprintf("$%.4f", n)
 }
 
 func fmtTokensTray(n int64) string {

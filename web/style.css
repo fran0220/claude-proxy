@@ -78,6 +78,10 @@ code { color: #ffd0bd; background: #0c0c12; border: 1px solid var(--border); bor
 .stack { display: grid; gap: 14px; }
 .split { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
 .notice { padding: 12px 14px; background: rgba(217,119,87,.1); border: 1px solid rgba(217,119,87,.24); border-radius: 12px; color: #ffd9c9; }
+.range-group { display: flex; gap: 6px; flex-wrap: wrap; }
+.range-btn.active { background: var(--accent); border-color: var(--accent); color: #160b07; font-weight: 700; }
+.metric { font-variant-numeric: tabular-nums; }
+table td, table th { font-variant-numeric: tabular-nums; }
 .error { color: var(--bad); }
 
 @media (max-width: 900px) {

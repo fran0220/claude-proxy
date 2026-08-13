@@ -32,6 +32,8 @@ func (s *AdminServer) handleVersion(w http.ResponseWriter, r *http.Request) {
 func (s *AdminServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	stats := s.logger.GetStatsFiltered(StatsFilter{Provider: "anthropic"})
 	recentLogs := s.logger.GetLogsFiltered(10, 0, "anthropic", "", 0)
+	usageFilter, rng := applyUsageRange(StatsFilter{Provider: "anthropic"}, "24h", time.Now())
+	usage := s.logger.GetUsage(usageFilter, rng, s.cfg.TimeLocation())
 
 	s.cfg.mu.RLock()
 	local, apikey, total := countRoutes(s.cfg.Claude.Models)
@@ -41,6 +43,7 @@ func (s *AdminServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"uptime": time.Since(s.startAt).Round(time.Second).String(),
 		"stats":  stats,
+		"usage_24h": usage,
 		"recent": recentLogs,
 		"provider": map[string]any{
 			"name":   "anthropic",
@@ -61,6 +64,7 @@ func (s *AdminServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"admin_listen": s.cfg.AdminListen,
 		"data_dir":     s.cfg.DataDir,
 		"debug":        s.cfg.Debug,
+		"pricing":      s.cfg.Pricing,
 		"claude": map[string]any{
 			"source":   s.cfg.Claude.Source,
 			"has_key":  s.cfg.Claude.APIKey != "" || len(s.cfg.Claude.Entries) > 0,
@@ -124,6 +128,40 @@ func (s *AdminServer) handleTokenTotals(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, s.logger.GetTokenTotalsFiltered(parseStatsFilter(r)))
 }
 
+func (s *AdminServer) handleUsage(w http.ResponseWriter, r *http.Request) {
+	filter := parseStatsFilter(r)
+	filter, rng := applyUsageRange(filter, r.URL.Query().Get("range"), time.Now())
+	writeJSON(w, s.logger.GetUsage(filter, rng, s.cfg.TimeLocation()))
+}
+
+func (s *AdminServer) handlePrices(w http.ResponseWriter, r *http.Request) {
+	if s.prices == nil {
+		writeJSON(w, map[string]any{"status": PriceStatus{Source: modelsDevAPIURL, Stale: true}, "models": map[string]ModelPrice{}})
+		return
+	}
+	writeJSON(w, map[string]any{"status": s.prices.Status(), "models": s.prices.Models()})
+}
+
+func (s *AdminServer) handleRefreshPrices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.prices == nil {
+		http.Error(w, "price catalog unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.prices.Refresh(r.Context()); err != nil {
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{
+			"status":  "error",
+			"message": err.Error(),
+			"pricing": s.prices.Status(),
+		})
+		return
+	}
+	writeJSON(w, map[string]any{"status": "ok", "pricing": s.prices.Status(), "models": s.prices.Models()})
+}
+
 func (s *AdminServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
@@ -133,7 +171,8 @@ func (s *AdminServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	route := r.URL.Query().Get("route")
 	minStatus, _ := strconv.Atoi(r.URL.Query().Get("status"))
-	writeJSON(w, s.logger.GetLogsFiltered(limit, offset, provider, route, minStatus))
+	filter, _ := applyUsageRange(parseStatsFilter(r), r.URL.Query().Get("range"), time.Now())
+	writeJSON(w, s.logger.GetLogsFilteredRange(limit, offset, provider, route, minStatus, filter.Since, filter.Until))
 }
 
 func (s *AdminServer) handleErrors(w http.ResponseWriter, r *http.Request) {

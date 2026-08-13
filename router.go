@@ -81,16 +81,16 @@ func (rt *ClaudeRouter) handleClaude(w http.ResponseWriter, r *http.Request, sta
 		if routeLabel == "" {
 			routeLabel = "none"
 		}
-		rt.logger.LogRequest(model, "anthropic", routeLabel, r.URL.Path, start)
-		rt.logger.RecordResult(model, http.StatusServiceUnavailable, TokenUsage{}, 0, msg, string(bodyBytes), "")
+		id := rt.logger.LogRequestWithCache(model, "anthropic", routeLabel, r.URL.Path, start, detectCacheTTL(bodyBytes))
+		rt.logger.RecordResultID(id, model, http.StatusServiceUnavailable, TokenUsage{}, 0, msg, string(bodyBytes), "")
 		writeProxyError(w, http.StatusServiceUnavailable, "auth_error", msg)
 		return
 	}
 
 	routeLabel := resolvedRoute + "/" + auth.Source
 	log.Infof("[CLAUDE] %s -> %s (%s)", model, r.URL.Path, routeLabel)
-	rt.logger.LogRequest(model, "anthropic", routeLabel, r.URL.Path, start)
-	rt.handler.Handle(w, r, bodyBytes, auth)
+	id := rt.logger.LogRequestWithCache(model, "anthropic", routeLabel, r.URL.Path, start, detectCacheTTL(bodyBytes))
+	rt.handler.Handle(w, r, bodyBytes, auth, id)
 }
 
 func writeProxyError(w http.ResponseWriter, status int, typ, message string) {

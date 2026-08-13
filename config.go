@@ -30,6 +30,7 @@ type Config struct {
 	Claude         ClaudeConfig      `yaml:"claude" json:"claude"`
 	ModelRedirects map[string]string `yaml:"model-redirects,omitempty" json:"model_redirects,omitempty"`
 	Retry          RetryConfig       `yaml:"retry" json:"retry"`
+	Pricing        PricingConfig     `yaml:"pricing,omitempty" json:"pricing,omitempty"`
 	Debug          DebugConfig       `yaml:"debug,omitempty" json:"debug,omitempty"`
 }
 
@@ -66,6 +67,11 @@ type RetryConfig struct {
 type DebugConfig struct {
 	DumpLastRequest bool   `yaml:"dump-last-request,omitempty" json:"dump_last_request,omitempty"`
 	DumpPath        string `yaml:"dump-path,omitempty" json:"dump_path,omitempty"`
+}
+
+type PricingConfig struct {
+	Timezone  string                `yaml:"timezone,omitempty" json:"timezone,omitempty"`
+	Overrides map[string]ModelPrice `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
 
 func generateID() string {
@@ -250,6 +256,34 @@ func (c *Config) DataDirPath() string {
 		return defaultConfigDir()
 	}
 	return expandHome(c.DataDir)
+}
+
+func (c *Config) PricingOverrides() map[string]ModelPrice {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.Pricing.Overrides) == 0 {
+		return nil
+	}
+	out := make(map[string]ModelPrice, len(c.Pricing.Overrides))
+	for k, v := range c.Pricing.Overrides {
+		out[k] = v
+	}
+	return out
+}
+
+func (c *Config) TimeLocation() *time.Location {
+	c.mu.RLock()
+	tz := strings.TrimSpace(c.Pricing.Timezone)
+	c.mu.RUnlock()
+	if tz == "" {
+		return time.Local
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		log.Warnf("invalid pricing.timezone %q, using local: %v", tz, err)
+		return time.Local
+	}
+	return loc
 }
 
 func (c *Config) SetClaudeSource(source string, applyToModels bool) bool {
