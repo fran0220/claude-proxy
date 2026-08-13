@@ -17,16 +17,18 @@ type AdminServer struct {
 	tokenMgr     *TokenManager
 	logger       *RequestLogger
 	prices       *PriceCatalog
+	subUsage     *SubscriptionUsageClient
 	authResolver *ClaudeAuthResolver
 	startAt      time.Time
 }
 
-func NewAdminServer(cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, prices *PriceCatalog, authResolver *ClaudeAuthResolver) *AdminServer {
+func NewAdminServer(cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, prices *PriceCatalog, authResolver *ClaudeAuthResolver, subUsage *SubscriptionUsageClient) *AdminServer {
 	return &AdminServer{
 		cfg:          cfg,
 		tokenMgr:     tokenMgr,
 		logger:       logger,
 		prices:       prices,
+		subUsage:     subUsage,
 		authResolver: authResolver,
 		startAt:      time.Now(),
 	}
@@ -45,6 +47,7 @@ func (s *AdminServer) Start(addr string) {
 	mux.HandleFunc("/api/stats/routes", s.handleStatsByRoute)
 	mux.HandleFunc("/api/stats/tokens", s.handleTokenTotals)
 	mux.HandleFunc("/api/usage", s.handleUsage)
+	mux.HandleFunc("/api/subscription/usage", s.handleSubscriptionUsage)
 	mux.HandleFunc("/api/prices", s.handlePrices)
 	mux.HandleFunc("/api/prices/refresh", s.handleRefreshPrices)
 	mux.HandleFunc("/api/logs", s.handleLogs)

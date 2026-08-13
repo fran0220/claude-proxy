@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -34,6 +35,7 @@ func (s *AdminServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	recentLogs := s.logger.GetLogsFiltered(10, 0, "anthropic", "", 0)
 	usageFilter, rng := applyUsageRange(StatsFilter{Provider: "anthropic"}, "24h", time.Now())
 	usage := s.logger.GetUsage(usageFilter, rng, s.cfg.TimeLocation())
+	subscription := s.subscriptionUsage(r.Context())
 
 	s.cfg.mu.RLock()
 	local, apikey, total := countRoutes(s.cfg.Claude.Models)
@@ -43,8 +45,9 @@ func (s *AdminServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"uptime": time.Since(s.startAt).Round(time.Second).String(),
 		"stats":  stats,
-		"usage_24h": usage,
-		"recent": recentLogs,
+		"usage_24h":    usage,
+		"subscription": subscription,
+		"recent":       recentLogs,
 		"provider": map[string]any{
 			"name":   "anthropic",
 			"local":  local,
@@ -132,6 +135,17 @@ func (s *AdminServer) handleUsage(w http.ResponseWriter, r *http.Request) {
 	filter := parseStatsFilter(r)
 	filter, rng := applyUsageRange(filter, r.URL.Query().Get("range"), time.Now())
 	writeJSON(w, s.logger.GetUsage(filter, rng, s.cfg.TimeLocation()))
+}
+
+func (s *AdminServer) handleSubscriptionUsage(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.subscriptionUsage(r.Context()))
+}
+
+func (s *AdminServer) subscriptionUsage(ctx context.Context) SubscriptionUsage {
+	if s.subUsage == nil {
+		return SubscriptionUsage{Available: false, Error: "subscription usage unavailable"}
+	}
+	return s.subUsage.Get(ctx)
 }
 
 func (s *AdminServer) handlePrices(w http.ResponseWriter, r *http.Request) {

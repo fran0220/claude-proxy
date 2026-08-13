@@ -1,8 +1,10 @@
 const app = document.getElementById('app');
+const pageKicker = document.getElementById('page-kicker');
 const pageTitle = document.getElementById('page-title');
 const pageSubtitle = document.getElementById('page-subtitle');
 const statusPill = document.getElementById('status-pill');
-let currentPage = 'overview';
+let currentPage = 'usage';
+let usageRange = '24h';
 
 const API = {
   async get(path) {
@@ -33,11 +35,26 @@ function money(v) {
   if (n > 0) return `$${n.toFixed(4)}`;
   return '$0.00';
 }
-function routePill(route) { return `<span class="pill ${route === 'apikey' ? 'warn' : 'good'}">${esc(route || 'local')}</span>`; }
-function setPageMeta(title, subtitle) { pageTitle.textContent = title; pageSubtitle.textContent = subtitle; }
+function pct(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function whenLocal(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+function setPageMeta(kicker, title, subtitle) {
+  pageKicker.textContent = kicker;
+  pageTitle.textContent = title;
+  pageSubtitle.textContent = subtitle;
+}
+function val(id) { return (document.getElementById(id)?.value || '').trim(); }
+
 function rangeButtons(active) {
   return ['24h','7d','30d','all'].map(r =>
-    `<button class="range-btn ${r === active ? 'active' : ''}" onclick="setUsageRange('${r}')">${r === 'all' ? 'All' : r}</button>`
+    `<button type="button" class="${r === active ? 'active' : ''}" onclick="setUsageRange('${r}')">${r === 'all' ? 'All' : r}</button>`
   ).join('');
 }
 
@@ -45,82 +62,177 @@ async function refreshStatus() {
   try {
     const s = await API.get('/api/status');
     const auth = s.auth || {};
-    statusPill.textContent = auth.local_available ? 'local auth ok' : (auth.apikey_available ? 'api key available' : 'auth missing');
-    statusPill.className = 'pill ' + (auth.local_available || auth.apikey_available ? 'good' : 'bad');
-  } catch (err) {
+    statusPill.textContent = auth.local_available ? 'keychain ok' : (auth.apikey_available ? 'api key ready' : 'auth missing');
+    statusPill.className = 'chip ' + (auth.local_available || auth.apikey_available ? 'good' : 'bad');
+  } catch {
     statusPill.textContent = 'offline';
-    statusPill.className = 'pill bad';
+    statusPill.className = 'chip bad';
   }
 }
 
 async function render() {
-  app.innerHTML = '<div class="card">Loading...</div>';
+  app.innerHTML = '<div class="panel empty">Loading…</div>';
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.page === currentPage));
   try {
-    if (currentPage === 'overview') await renderOverview();
-    if (currentPage === 'logs') await renderLogs();
-    if (currentPage === 'stats') await renderStats();
-    if (currentPage === 'models') await renderModels();
-    if (currentPage === 'settings') await renderSettings();
+    if (currentPage === 'usage') await renderUsage();
+    if (currentPage === 'requests') await renderRequests();
+    if (currentPage === 'routing') await renderRouting();
+    if (currentPage === 'access') await renderAccess();
   } catch (err) {
-    app.innerHTML = `<div class="card error"><strong>Failed:</strong><pre>${esc(err.message || err)}</pre></div>`;
+    app.innerHTML = `<div class="panel error"><strong>Failed</strong><pre>${esc(err.message || err)}</pre></div>`;
   }
   refreshStatus();
 }
 
-async function renderOverview() {
-  setPageMeta('Overview', 'Proxy status, auth, and recent Claude usage');
-  const o = await API.get('/api/overview');
-  const s = o.stats || {};
-  const u = o.usage_24h || {};
-  const totals = u.totals || {};
-  const p = o.provider || {};
-  const auth = p.auth || {};
-  app.innerHTML = `
-    <div class="grid cols-4">
-      ${metric('Last 24h cost', money(totals.cost_usd), 'equivalent API $')}
-      ${metric('Last 24h requests', totals.requests || 0)}
-      ${metric('All-time requests', s.total_requests)}
-      ${metric('All-time errors', s.total_errors)}
-    </div>
-    <div class="grid cols-2" style="margin-top:14px">
-      <div class="card">
-        <h2>Auth</h2>
-        <p>Local Keychain: ${auth.local_available ? '<span class="pill good">available</span>' : '<span class="pill bad">unavailable</span>'}</p>
-        <p>API key: ${auth.apikey_available ? '<span class="pill good">configured</span>' : '<span class="pill warn">not configured</span>'}</p>
-        ${auth.local_expires_in ? `<p class="muted">Local token expires in ${esc(auth.local_expires_in)}</p>` : ''}
-        ${auth.local_error ? `<p class="error">${esc(auth.local_error)}</p>` : ''}
-      </div>
-      <div class="card">
-        <h2>Models</h2>
-        <p>${num(p.total)} configured models</p>
-        <p>${num(p.local)} local / ${num(p.apikey)} API key</p>
-        <div class="actions" style="margin-top:12px"><button onclick="switchPage('models')">Manage models</button><button onclick="discoverModels()" class="btn primary">Discover models</button></div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <div class="split"><h2>Recent requests</h2><button onclick="switchPage('logs')">Open logs</button></div>
-      ${logsTable(o.recent || [])}
-    </div>`;
-}
-
-function metric(label, value, hint) {
+function stat(label, value, hint) {
   const display = typeof value === 'string' ? value : num(value);
-  return `<div class="card"><div class="label">${esc(label)}</div><div class="metric">${display}</div>${hint ? `<div class="muted">${esc(hint)}</div>` : ''}</div>`;
+  return `<div class="panel stat"><div class="label">${esc(label)}</div><div class="value">${display}</div>${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</div>`;
 }
 
-async function renderLogs() {
-  setPageMeta('Logs', 'Recent proxied Claude API calls');
+function dialColor(n) {
+  if (n >= 90) return 'var(--bad)';
+  if (n >= 70) return 'var(--warn)';
+  return 'var(--copper)';
+}
+
+function dial(label, windowOrPct, resetAt, note) {
+  const n = typeof windowOrPct === 'number' ? windowOrPct : pct(windowOrPct && windowOrPct.utilization);
+  const reset = resetAt || (windowOrPct && windowOrPct.resets_at);
+  const used = n == null ? 0 : Math.max(0, Math.min(100, n));
+  const r = 52;
+  const c = 2 * Math.PI * r;
+  const dash = (used / 100) * c;
+  const value = n == null ? '—' : `${Math.round(n)}%`;
+  return `<div class="dial">
+    <svg viewBox="0 0 132 132" aria-hidden="true">
+      <circle cx="66" cy="66" r="${r}" fill="none" stroke="#2c261d" stroke-width="10"/>
+      <circle cx="66" cy="66" r="${r}" fill="none" stroke="${dialColor(used)}" stroke-width="10"
+        stroke-linecap="round" stroke-dasharray="${dash} ${c}" transform="rotate(-90 66 66)"/>
+      <text x="66" y="72" text-anchor="middle" fill="currentColor" font-family="IBM Plex Mono, monospace" font-size="22">${esc(value)}</text>
+    </svg>
+    <div class="dial-label">${esc(label)}</div>
+    <div class="dial-reset">${esc(reset ? 'resets ' + whenLocal(reset) : (note || 'no reset yet'))}</div>
+  </div>`;
+}
+
+function planDials(sub) {
+  if (!sub || !sub.available) {
+    return `<div class="panel"><h2>Plan limits</h2><p class="empty">${esc(sub && sub.error ? sub.error : 'Sign in with local Claude OAuth to read weekly limits.')}</p></div>`;
+  }
+  const scoped = (sub.limits || []).filter(l => l.kind === 'weekly_scoped');
+  const title = [sub.subscription, sub.rate_limit_tier].filter(Boolean).join(' · ') || 'Claude plan';
+  return `<div class="panel">
+    <div class="split"><h2>Plan limits</h2><span class="chip ${sub.stale ? 'warn' : 'good'}">${esc(title)}${sub.stale ? ' · cached' : ''}</span></div>
+    <div class="dials">
+      ${dial('5-hour session', sub.session)}
+      ${dial('Weekly all models', sub.weekly)}
+      ${scoped[0] ? dial('Weekly ' + ((scoped[0].scope && scoped[0].scope.model && scoped[0].scope.model.display_name) || 'scoped'), scoped[0].percent, scoped[0].resets_at, scoped[0].is_active ? 'active now' : '') : dial('Weekly extra', null, '', 'no scoped cap')}
+    </div>
+    ${(sub.weekly_sonnet || sub.weekly_opus) ? `<div class="dials" style="margin-top:16px">
+      ${sub.weekly_sonnet ? dial('Weekly Sonnet', sub.weekly_sonnet) : ''}
+      ${sub.weekly_opus ? dial('Weekly Opus', sub.weekly_opus) : ''}
+    </div>` : ''}
+  </div>`;
+}
+
+function spark(rows) {
+  if (!rows.length) return '<p class="empty">No spend in this window.</p>';
+  const max = Math.max(...rows.map(r => Number(r.cost_usd || 0)), 0.0001);
+  return `<div class="spark" aria-hidden="true">${rows.map(r => {
+    const h = Math.max(4, Math.round((Number(r.cost_usd || 0) / max) * 72));
+    return `<i style="height:${h}px" title="${esc(r.bucket)} ${money(r.cost_usd)}"></i>`;
+  }).join('')}</div>`;
+}
+
+async function renderUsage() {
+  setPageMeta('Usage', 'How full is the week', 'Plan limits plus equivalent API spend');
+  const [usage, sub] = await Promise.all([
+    API.get('/api/usage?range=' + encodeURIComponent(usageRange)),
+    API.get('/api/subscription/usage').catch(() => ({}))
+  ]);
+  const totals = usage.totals || {};
+  const tokens = totals.tokens || {};
+  const pricing = usage.pricing || {};
+  const fetched = pricing.fetched_at ? new Date(pricing.fetched_at).toLocaleString() : 'never';
+  app.innerHTML = `
+    ${planDials(sub)}
+    <div class="split">
+      <div class="seg">${rangeButtons(usageRange)}</div>
+      <div class="actions">
+        <span class="hint">prices ${pricing.stale ? 'stale' : 'live'} · ${esc(fetched)}</span>
+        <button type="button" onclick="refreshPrices()">Refresh prices</button>
+      </div>
+    </div>
+    <div class="grid cols-4">
+      ${stat('Equivalent cost', money(totals.cost_usd), 'API list price, not a subscription bill')}
+      ${stat('Requests', totals.requests || 0)}
+      ${stat('Input tokens', tokens.input || 0)}
+      ${stat('Output tokens', tokens.output || 0)}
+    </div>
+    <div class="grid cols-2">
+      <div class="panel"><h2>${usage.granularity === 'hour' ? 'Spend by hour' : 'Spend by day'}</h2>${spark(usage.series || [])}${usageSeriesTable(usage.series || [])}</div>
+      <div class="panel"><h2>By route</h2>${usageRoutesTable(usage.by_route || [])}</div>
+    </div>
+    <div class="panel"><h2>By model</h2>${usageModelsTable(usage.by_model || [])}</div>
+    ${totals.unpriced_models && totals.unpriced_models.length ? `<div class="notice">Unpriced models: ${totals.unpriced_models.map(esc).join(', ')}</div>` : ''}`;
+}
+
+function usageRoutesTable(rows) {
+  if (!rows.length) return '<p class="empty">No route stats yet.</p>';
+  return `<table><thead><tr><th>Route</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr>
+    <td>${esc(r.route)}${r.equivalent ? ' <span class="pill warn">equivalent</span>' : ''}</td>
+    <td>${num(r.requests)}</td>
+    <td>${num((r.tokens || {}).total)}</td>
+    <td>${money(r.cost_usd)}</td>
+  </tr>`).join('')}</tbody></table>`;
+}
+function usageSeriesTable(rows) {
+  if (!rows.length) return '';
+  return `<table><thead><tr><th>When</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr>
+    <td>${esc(r.bucket)}</td>
+    <td>${num(r.requests)}</td>
+    <td>${num(r.tokens)}</td>
+    <td>${money(r.cost_usd)}</td>
+  </tr>`).join('')}</tbody></table>`;
+}
+function usageModelsTable(rows) {
+  if (!rows.length) return '<p class="empty">No model stats yet.</p>';
+  return `<table><thead><tr><th>Model</th><th>Requests</th><th>Input</th><th>Output</th><th>Cache</th><th>Cost</th></tr></thead><tbody>${rows.map(m => {
+    const t = m.tokens || {};
+    return `<tr>
+      <td><code>${esc(m.model)}</code> ${m.priced === 'unpriced' ? '<span class="pill warn">unpriced</span>' : (m.priced === 'estimated' ? '<span class="pill">est.</span>' : '')}</td>
+      <td>${num(m.requests)}</td>
+      <td>${num(t.input)}</td>
+      <td>${num(t.output)}</td>
+      <td>${num((t.cache_read || 0) + (t.cache_create || 0))}</td>
+      <td>${m.priced === 'unpriced' ? '—' : money(m.cost_usd)}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+async function renderRequests() {
+  setPageMeta('Requests', 'What just went through', 'Recent proxied Claude calls');
   const logs = await API.get('/api/logs?limit=100&range=' + encodeURIComponent(usageRange));
-  app.innerHTML = `<div class="card"><div class="split"><h2>Request logs</h2><div class="actions"><div class="range-group">${rangeButtons(usageRange)}</div><button onclick="render()">Refresh</button></div></div>${logsTable(logs || [])}</div>`;
+  app.innerHTML = `<div class="panel">
+    <div class="split"><h2>Request log</h2><div class="actions"><div class="seg">${rangeButtons(usageRange)}</div><button type="button" onclick="render()">Refresh</button></div></div>
+    ${logsTable(logs || [])}
+  </div>`;
+}
+
+function formatLatency(v) {
+  if (v == null || v === '') return '';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (n >= 1e6) return Math.round(n / 1e6) + 'ms';
+  return n + 'ms';
 }
 
 function logsTable(logs) {
-  if (!logs.length) return '<p class="muted">No logs yet.</p>';
+  if (!logs.length) return '<p class="empty">No requests in this window. Send one through the proxy to populate this list.</p>';
   return `<table><thead><tr><th>Time</th><th>Model</th><th>Route</th><th>Status</th><th>Tokens</th><th>Cost</th><th>Latency</th><th>Error</th></tr></thead><tbody>` + logs.map(l => {
-    const tokens = (l.tokens || {});
+    const tokens = l.tokens || {};
     const total = (tokens.input_tokens || 0) + (tokens.output_tokens || 0) + (tokens.cache_read_tokens || 0) + (tokens.cache_create_tokens || 0);
-    const cost = l.priced === 'unpriced' ? '<span class="muted">unpriced</span>' : money(l.cost_usd);
+    const cost = l.priced === 'unpriced' ? '<span class="empty">unpriced</span>' : money(l.cost_usd);
     return `<tr>
       <td>${esc(new Date(l.timestamp).toLocaleString())}</td>
       <td><code>${esc(l.model)}</code></td>
@@ -134,177 +246,97 @@ function logsTable(logs) {
   }).join('') + '</tbody></table>';
 }
 
-function formatLatency(v) {
-  if (v == null || v === '') return '';
-  const n = Number(v);
-  if (!Number.isFinite(n)) return String(v);
-  if (n >= 1e9) return Math.round(n / 1e6) + 'ms';
-  if (n >= 1e6) return Math.round(n / 1e6) + 'ms';
-  return n + 'ms';
-}
-
-let usageRange = '24h';
-
-async function renderStats() {
-  setPageMeta('Stats', 'Token and equivalent API cost by time window');
-  const usage = await API.get('/api/usage?range=' + encodeURIComponent(usageRange));
-  const totals = usage.totals || {};
-  const tokens = totals.tokens || {};
-  const pricing = usage.pricing || {};
-  const fetched = pricing.fetched_at ? new Date(pricing.fetched_at).toLocaleString() : 'never';
-  app.innerHTML = `
-    <div class="split" style="margin-bottom:14px">
-      <div class="range-group">${rangeButtons(usageRange)}</div>
-      <div class="actions">
-        <span class="muted">models.dev ${pricing.stale ? 'stale' : 'ok'} · ${esc(fetched)}</span>
-        <button onclick="refreshPrices()">Refresh prices</button>
-      </div>
-    </div>
-    <div class="grid cols-4">
-      ${metric('Cost', money(totals.cost_usd), 'equivalent API $')}
-      ${metric('Requests', totals.requests || 0)}
-      ${metric('Input tokens', tokens.input || 0)}
-      ${metric('Output tokens', tokens.output || 0)}
-    </div>
-    <div class="grid cols-4" style="margin-top:14px">
-      ${metric('Cache read', tokens.cache_read || 0, money((totals.cost_by_component || {}).cache_read))}
-      ${metric('Cache write', tokens.cache_create || 0, money((totals.cost_by_component || {}).cache_write))}
-      ${metric('Local equivalent', money(totals.cost_local_usd), 'not a subscription bill')}
-      ${metric('API key', money(totals.cost_apikey_usd))}
-    </div>
-    ${totals.unpriced_models && totals.unpriced_models.length ? `<div class="notice" style="margin-top:14px">Unpriced models: ${totals.unpriced_models.map(esc).join(', ')}</div>` : ''}
-    <div class="grid cols-2" style="margin-top:14px">
-      <div class="card"><h2>By route</h2>${usageRoutesTable(usage.by_route || [])}</div>
-      <div class="card"><h2>${usage.granularity === 'hour' ? 'By hour' : 'By day'}</h2>${usageSeriesTable(usage.series || [])}</div>
-    </div>
-    <div class="card" style="margin-top:14px"><h2>By model</h2>${usageModelsTable(usage.by_model || [])}</div>`;
-}
-
-function usageRoutesTable(rows) {
-  if (!rows.length) return '<p class="muted">No route stats.</p>';
-  return `<table><thead><tr><th>Route</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr>
-    <td>${esc(r.route)}${r.equivalent ? ' <span class="pill warn">equivalent</span>' : ''}</td>
-    <td>${num(r.requests)}</td>
-    <td>${num((r.tokens || {}).total)}</td>
-    <td>${money(r.cost_usd)}</td>
-  </tr>`).join('')}</tbody></table>`;
-}
-function usageSeriesTable(rows) {
-  if (!rows.length) return '<p class="muted">No usage in this window.</p>';
-  return `<table><thead><tr><th>When</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr>
-    <td>${esc(r.bucket)}</td>
-    <td>${num(r.requests)}</td>
-    <td>${num(r.tokens)}</td>
-    <td>${money(r.cost_usd)}</td>
-  </tr>`).join('')}</tbody></table>`;
-}
-function usageModelsTable(rows) {
-  if (!rows.length) return '<p class="muted">No model stats.</p>';
-  return `<table><thead><tr><th>Model</th><th>Requests</th><th>Input</th><th>Output</th><th>Cache</th><th>Cost</th><th></th></tr></thead><tbody>${rows.map(m => {
-    const t = m.tokens || {};
-    const priced = m.priced === 'unpriced' ? '<span class="pill warn">unpriced</span>' : (m.priced === 'estimated' ? '<span class="pill">est.</span>' : '');
-    return `<tr>
-      <td><code>${esc(m.model)}</code></td>
-      <td>${num(m.requests)}</td>
-      <td>${num(t.input)}</td>
-      <td>${num(t.output)}</td>
-      <td>${num((t.cache_read || 0) + (t.cache_create || 0))}</td>
-      <td>${m.priced === 'unpriced' ? '—' : money(m.cost_usd)}</td>
-      <td>${priced}</td>
-    </tr>`;
-  }).join('')}</tbody></table>`;
-}
-
-async function renderModels() {
-  setPageMeta('Models', 'Discovered and manually configured Claude models');
-  const models = await API.get('/api/models');
+async function renderRouting() {
+  setPageMeta('Routing', 'Where each model goes', 'Local Keychain or API key, plus redirects');
+  const [models, redirects, cfg] = await Promise.all([API.get('/api/models'), API.get('/api/redirects'), API.get('/api/config')]);
   app.innerHTML = `
     <div class="stack">
-      <div class="card">
-        <div class="split"><h2>Model discovery</h2><div class="actions"><button onclick="discoverModels('local')">Discover via local</button><button onclick="discoverModels('apikey')">Discover via API key</button><button class="btn primary" onclick="discoverModels()">Auto discover</button></div></div>
-        <p class="muted">Discovery uses Anthropic <code>GET /v1/models</code>. It only adds/updates metadata and never deletes manual models.</p>
-        <div id="discover-result"></div>
+      <div class="panel">
+        <div class="split"><h2>Default route</h2></div>
+        <p class="hint">Unknown models follow this source. Check the box to rewrite every configured model too.</p>
+        <div class="form-row" style="margin-top:12px">
+          <div class="field"><label>Auth source</label><select id="claude-source"><option value="keychain" ${(cfg.claude?.source || 'keychain') !== 'apikey' ? 'selected' : ''}>Local / Keychain</option><option value="apikey" ${(cfg.claude?.source || 'keychain') === 'apikey' ? 'selected' : ''}>API key</option></select></div>
+          <label class="field"><span>Apply to existing models</span><input id="source-apply-models" type="checkbox" checked></label>
+          <button class="primary" type="button" onclick="setClaudeSource()">Save route</button>
+        </div>
+        <div id="source-result" class="hint" style="margin-top:10px"></div>
       </div>
-      <div class="card">
-        <h2>Add manual model</h2>
-        <div class="form-row four">
+      <div class="panel">
+        <div class="split">
+          <h2>Models</h2>
+          <div class="actions">
+            <button type="button" onclick="discoverModels('local')">Discover local</button>
+            <button type="button" onclick="discoverModels('apikey')">Discover API key</button>
+            <button class="primary" type="button" onclick="discoverModels()">Auto discover</button>
+          </div>
+        </div>
+        <div id="discover-result"></div>
+        <div class="form-row four" style="margin:14px 0">
           <div class="field"><label>Model ID</label><input id="add-model-id" placeholder="claude-new-model"></div>
           <div class="field"><label>Display name</label><input id="add-model-name" placeholder="Claude New Model"></div>
           <div class="field"><label>Route</label><select id="add-model-route"><option value="local">local</option><option value="apikey">apikey</option></select></div>
-          <button class="btn primary" onclick="addModel()">Add</button>
+          <button class="primary" type="button" onclick="addModel()">Add</button>
         </div>
+        ${modelsConfigTable(models || [])}
       </div>
-      <div class="card"><h2>Configured models</h2>${modelsConfigTable(models || [])}</div>
-    </div>`;
-}
-
-function modelsConfigTable(models) {
-  if (!models.length) return '<p class="muted">No models configured.</p>';
-  return `<table><thead><tr><th>Model</th><th>Display</th><th>Route</th><th>Last seen</th><th>Limits</th><th></th></tr></thead><tbody>${models.map(m => `<tr>
-    <td><code>${esc(m.name)}</code>${m.discovered ? ' <span class="pill good">discovered</span>' : ''}</td>
-    <td>${esc(m.display_name || '')}</td>
-    <td><select onchange="setModelRoute('${esc(m.name)}', this.value)"><option value="local" ${m.route !== 'apikey' ? 'selected' : ''}>local</option><option value="apikey" ${m.route === 'apikey' ? 'selected' : ''}>apikey</option></select></td>
-    <td>${m.last_seen ? esc(new Date(m.last_seen).toLocaleString()) : '<span class="muted">manual</span>'}</td>
-    <td>${m.max_input_tokens ? num(m.max_input_tokens) + ' in' : ''}${m.max_tokens ? ' / ' + num(m.max_tokens) + ' out' : ''}</td>
-    <td><button class="btn danger" onclick="removeModel('${esc(m.name)}')">Remove</button></td>
-  </tr>`).join('')}</tbody></table>`;
-}
-
-async function renderSettings() {
-  setPageMeta('Settings', 'Credentials, redirects, and runtime configuration');
-  const [cfg, keys, redirects] = await Promise.all([API.get('/api/config'), API.get('/api/keys'), API.get('/api/redirects')]);
-  app.innerHTML = `
-    <div class="stack">
-      <div class="card">
-        <h2>Runtime</h2>
-        <p>Proxy: <code>${esc(cfg.listen)}</code> · Admin: <code>${esc(cfg.admin_listen)}</code> · Data: <code>${esc(cfg.data_dir)}</code></p>
-        <p class="muted">Set <code>CLAUDE_PROXY_CONFIG</code> for a custom config file and <code>CLAUDE_PROXY_LOG=debug</code> for debug logs.</p>
-      </div>
-      <div class="card">
-        <h2>Default Claude route</h2>
-        <p class="muted">Choose whether unknown models and newly added models use local Claude Code Keychain OAuth or an Anthropic API key. Use the checkbox to switch all configured models immediately.</p>
-        <div class="form-row" style="margin-top:12px">
-          <div class="field"><label>Auth source</label><select id="claude-source"><option value="keychain" ${(cfg.claude?.source || 'keychain') !== 'apikey' ? 'selected' : ''}>Local / Keychain</option><option value="apikey" ${(cfg.claude?.source || 'keychain') === 'apikey' ? 'selected' : ''}>API key</option></select></div>
-          <label class="field"><span>Apply to existing model routes</span><input id="source-apply-models" type="checkbox" checked></label>
-          <button class="btn primary" onclick="setClaudeSource()">Save route</button>
-        </div>
-        <div id="source-result" class="muted" style="margin-top:10px"></div>
-      </div>
-      <div class="card">
-        <div class="split"><h2>Claude token</h2><button onclick="refreshToken()">Refresh Keychain token</button></div>
-        <div id="token-result" class="muted"></div>
-      </div>
-      <div class="card">
-        <h2>API keys</h2>
-        ${apiKeysTable(keys || [])}
-        <h2 style="margin-top:18px">Add API key</h2>
-        <div class="form-row four">
-          <div class="field"><label>Label</label><input id="key-label" placeholder="Production"></div>
-          <div class="field"><label>API key</label><input id="key-value" type="password" placeholder="sk-ant-..."></div>
-          <div class="field"><label>Base URL</label><input id="key-base" placeholder="https://api.anthropic.com"></div>
-          <button class="btn primary" onclick="addAPIKey()">Add</button>
-        </div>
-        <div class="actions" style="margin-top:10px"><button onclick="testAPIKeyInput()">Test unsaved key</button><span id="key-test-result" class="muted"></span></div>
-      </div>
-      <div class="card">
-        <h2>Model redirects</h2>
+      <div class="panel">
+        <h2>Redirects</h2>
         ${redirectsTable(redirects || {})}
         <div class="form-row" style="margin-top:12px">
           <div class="field"><label>From</label><input id="redir-from" placeholder="claude-old-id"></div>
           <div class="field"><label>To (empty deletes)</label><input id="redir-to" placeholder="claude-new-id"></div>
-          <button onclick="setRedirect()" class="btn primary">Save</button>
+          <button class="primary" type="button" onclick="setRedirect()">Save</button>
         </div>
+      </div>
+    </div>`;
+}
+
+function modelsConfigTable(models) {
+  if (!models.length) return '<p class="empty">No models configured. Discover from Anthropic or add one by hand.</p>';
+  return `<table><thead><tr><th>Model</th><th>Display</th><th>Route</th><th>Last seen</th><th></th></tr></thead><tbody>${models.map(m => `<tr>
+    <td><code>${esc(m.name)}</code>${m.discovered ? ' <span class="pill good">seen</span>' : ''}</td>
+    <td>${esc(m.display_name || '')}</td>
+    <td><select aria-label="Route for ${esc(m.name)}" onchange="setModelRoute('${esc(m.name)}', this.value)"><option value="local" ${m.route !== 'apikey' ? 'selected' : ''}>local</option><option value="apikey" ${m.route === 'apikey' ? 'selected' : ''}>apikey</option></select></td>
+    <td>${m.last_seen ? esc(new Date(m.last_seen).toLocaleString()) : '<span class="empty">manual</span>'}</td>
+    <td><button class="danger" type="button" onclick="removeModel('${esc(m.name)}')">Remove</button></td>
+  </tr>`).join('')}</tbody></table>`;
+}
+
+async function renderAccess() {
+  setPageMeta('Access', 'Who can talk to Claude', 'Keychain token and API keys');
+  const [cfg, keys] = await Promise.all([API.get('/api/config'), API.get('/api/keys')]);
+  app.innerHTML = `
+    <div class="stack">
+      <div class="panel">
+        <h2>Runtime</h2>
+        <p>Proxy <code>${esc(cfg.listen)}</code> · Dashboard <code>${esc(cfg.admin_listen)}</code></p>
+        <p class="hint">Data lives in <code>${esc(cfg.data_dir)}</code>. Use <code>CLAUDE_PROXY_LOG=debug</code> for verbose logs.</p>
+      </div>
+      <div class="panel">
+        <div class="split"><h2>Keychain token</h2><button type="button" onclick="refreshToken()">Refresh token</button></div>
+        <div id="token-result" class="hint"></div>
+      </div>
+      <div class="panel">
+        <h2>API keys</h2>
+        ${apiKeysTable(keys || [])}
+        <div class="form-row four" style="margin-top:16px">
+          <div class="field"><label>Label</label><input id="key-label" placeholder="Production"></div>
+          <div class="field"><label>API key</label><input id="key-value" type="password" placeholder="sk-ant-..."></div>
+          <div class="field"><label>Base URL</label><input id="key-base" placeholder="https://api.anthropic.com"></div>
+          <button class="primary" type="button" onclick="addAPIKey()">Add</button>
+        </div>
+        <div class="actions" style="margin-top:10px"><button type="button" onclick="testAPIKeyInput()">Test unsaved key</button><span id="key-test-result" class="hint"></span></div>
       </div>
     </div>`;
 }
 
 function apiKeysTable(keys) {
-  if (!keys.length) return '<p class="muted">No API keys configured.</p>';
-  return `<table><thead><tr><th>Label</th><th>Key</th><th>Base URL</th><th></th></tr></thead><tbody>${keys.map(k => `<tr><td>${esc(k.label || '')}</td><td><code>${esc(k.api_key)}</code></td><td>${esc(k.base_url || 'default')}</td><td>${k.id === '_legacy' ? '<span class="muted">legacy</span>' : `<button class="btn danger" onclick="removeAPIKey('${esc(k.id)}')">Remove</button>`}</td></tr>`).join('')}</tbody></table>`;
+  if (!keys.length) return '<p class="empty">No API keys yet. Add one to route models off the subscription.</p>';
+  return `<table><thead><tr><th>Label</th><th>Key</th><th>Base URL</th><th></th></tr></thead><tbody>${keys.map(k => `<tr><td>${esc(k.label || '')}</td><td><code>${esc(k.api_key)}</code></td><td>${esc(k.base_url || 'default')}</td><td>${k.id === '_legacy' ? '<span class="empty">legacy</span>' : `<button class="danger" type="button" onclick="removeAPIKey('${esc(k.id)}')">Remove</button>`}</td></tr>`).join('')}</tbody></table>`;
 }
 function redirectsTable(redirs) {
   const rows = Object.entries(redirs);
-  if (!rows.length) return '<p class="muted">No redirects configured.</p>';
+  if (!rows.length) return '<p class="empty">No redirects.</p>';
   return `<table><thead><tr><th>From</th><th>To</th></tr></thead><tbody>${rows.map(([from,to]) => `<tr><td><code>${esc(from)}</code></td><td><code>${esc(to)}</code></td></tr>`).join('')}</tbody></table>`;
 }
 
@@ -314,17 +346,18 @@ async function refreshPrices() {
   try {
     await API.post('/api/prices/refresh', {});
   } catch (err) {
-    app.innerHTML = `<div class="card error"><strong>Price refresh failed:</strong><pre>${esc(err.message || err)}</pre></div>`;
-    return;
+    const el = document.querySelector('.actions .hint');
+    if (el) { el.textContent = err.message || 'Price refresh failed'; el.className = 'error'; return; }
+    throw err;
   }
   await render();
 }
 async function discoverModels(route) {
   const el = document.getElementById('discover-result');
-  if (el) el.innerHTML = '<p class="muted">Discovering...</p>';
+  if (el) el.innerHTML = '<p class="hint">Discovering…</p>';
   const res = await API.post('/api/models/discover', route ? { route } : {});
   if (el) el.innerHTML = `<div class="notice">Seen ${num(res.seen)}, added ${num(res.added)}, updated ${num(res.updated)} via ${esc(res.route)}/${esc(res.source)}.</div>`;
-  if (currentPage !== 'models') currentPage = 'models';
+  currentPage = 'routing';
   setTimeout(render, 700);
 }
 async function addModel() {
@@ -343,12 +376,9 @@ async function setClaudeSource() {
   const out = document.getElementById('source-result');
   const source = val('claude-source');
   const applyToModels = Boolean(document.getElementById('source-apply-models')?.checked);
-  if (out) out.textContent = 'Saving...';
+  if (out) out.textContent = 'Saving…';
   const res = await API.post('/api/config/source', { source, apply_to_models: applyToModels });
-  if (out) {
-    out.textContent = `Saved: ${res.source === 'apikey' ? 'API key' : 'Local / Keychain'}${res.apply_to_models ? ' and updated existing model routes.' : '.'}`;
-    out.className = 'pill good';
-  }
+  if (out) out.textContent = `Saved ${res.source === 'apikey' ? 'API key' : 'Keychain'}${res.apply_to_models ? ' and updated model routes' : ''}.`;
   refreshStatus();
 }
 async function addAPIKey() {
@@ -362,14 +392,14 @@ async function removeAPIKey(id) {
 }
 async function testAPIKeyInput() {
   const out = document.getElementById('key-test-result');
-  out.textContent = 'Testing...';
+  out.textContent = 'Testing…';
   const res = await API.post('/api/keys/test', { api_key: val('key-value'), base_url: val('key-base') });
   out.textContent = `${res.success ? 'OK' : 'Failed'}: ${res.message} (${res.latency_ms || 0}ms)`;
-  out.className = res.success ? 'pill good' : 'pill bad';
+  out.className = res.success ? 'chip good' : 'chip bad';
 }
 async function refreshToken() {
   const out = document.getElementById('token-result');
-  out.textContent = 'Refreshing...';
+  out.textContent = 'Refreshing…';
   const res = await API.post('/api/token/refresh', {});
   out.textContent = res.status === 'ok' ? 'Token refreshed.' : (res.message || 'Refresh failed');
 }
@@ -377,7 +407,6 @@ async function setRedirect() {
   await API.post('/api/redirects/set', { from: val('redir-from'), to: val('redir-to') });
   render();
 }
-function val(id) { return (document.getElementById(id)?.value || '').trim(); }
 
 document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
 document.getElementById('refresh-btn').addEventListener('click', render);

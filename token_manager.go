@@ -89,6 +89,18 @@ func (tm *TokenManager) GetAccessToken(ctx context.Context) (string, error) {
 	return tm.accessToken, nil
 }
 
+func (tm *TokenManager) SubscriptionType() string {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	return tm.extras.SubscriptionType
+}
+
+func (tm *TokenManager) RateLimitTier() string {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	return tm.extras.RateLimitTier
+}
+
 // Status returns a snapshot for UI display.
 func (tm *TokenManager) Status() TokenStatus {
 	tm.mu.RLock()

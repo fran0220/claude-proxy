@@ -11,7 +11,7 @@ Claude-only local reverse proxy with Claude Code OAuth/API-key authentication, r
 - Can fall back to configured Anthropic API keys.
 - Records request logs and token usage into SQLite, including a per-request price snapshot.
 - Estimates equivalent Anthropic API cost from [models.dev](https://models.dev) list prices (`input` / `output` / `cache_read` / `cache_write`).
-- Provides an embedded dashboard for overview, logs, 24h/7d/30d/all usage, models, API keys, redirects, and token refresh.
+- Provides an embedded dashboard for plan limits, 24h/7d/30d/all usage, request logs, model routing, API keys, and token refresh.
 - Shows a macOS status bar icon with auth/model/stats/last-request status and quick actions.
 - Dynamically discovers available Claude models via Anthropic `GET /v1/models`.
 
@@ -156,6 +156,7 @@ GET  /api/stats/hourly?hours=24
 GET  /api/stats/routes
 GET  /api/stats/tokens
 GET  /api/usage?range=24h
+GET  /api/subscription/usage
 GET  /api/prices
 POST /api/prices/refresh
 GET  /api/logs?limit=100

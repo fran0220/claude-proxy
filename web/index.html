@@ -4,35 +4,40 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claude Proxy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <aside class="sidebar">
-    <div class="brand">
-      <div class="logo">C</div>
+  <aside class="rail">
+    <div class="mark">
+      <span class="mark-dot" aria-hidden="true"></span>
       <div>
-        <div class="brand-title">Claude Proxy</div>
-        <div class="brand-subtitle">local API + stats</div>
+        <div class="mark-name">Claude Proxy</div>
+        <div class="mark-meta">local meter</div>
       </div>
     </div>
-    <button class="nav active" data-page="overview">Overview</button>
-    <button class="nav" data-page="logs">Logs</button>
-    <button class="nav" data-page="stats">Stats</button>
-    <button class="nav" data-page="models">Models</button>
-    <button class="nav" data-page="settings">Settings</button>
+    <nav class="navs" aria-label="Primary">
+      <button class="nav active" data-page="usage">Usage</button>
+      <button class="nav" data-page="requests">Requests</button>
+      <button class="nav" data-page="routing">Routing</button>
+      <button class="nav" data-page="access">Access</button>
+    </nav>
+    <div class="rail-foot">
+      <span id="status-pill" class="chip">loading</span>
+    </div>
   </aside>
-  <main class="main">
-    <header class="topbar">
+  <main class="stage">
+    <header class="mast">
       <div>
-        <h1 id="page-title">Overview</h1>
-        <p id="page-subtitle">Claude-only proxy status</p>
+        <p class="kicker" id="page-kicker">Usage</p>
+        <h1 id="page-title">How full is the week</h1>
+        <p id="page-subtitle">Plan limits and equivalent API spend</p>
       </div>
-      <div class="top-actions">
-        <span id="status-pill" class="pill">loading</span>
-        <button id="refresh-btn" class="btn">Refresh</button>
-      </div>
+      <button id="refresh-btn" class="ghost" type="button">Refresh</button>
     </header>
-    <section id="app" class="content"></section>
+    <section id="app" class="sheet" aria-live="polite"></section>
   </main>
   <script src="/app.js"></script>
 </body>

@@ -4,6 +4,6 @@ package main
 
 import "context"
 
-func runStatusApp(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, authResolver *ClaudeAuthResolver) {
+func runStatusApp(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, authResolver *ClaudeAuthResolver, subUsage *SubscriptionUsageClient) {
 	<-ctx.Done()
 }

@@ -14,7 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func runStatusApp(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, authResolver *ClaudeAuthResolver) {
+func runStatusApp(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, authResolver *ClaudeAuthResolver, subUsage *SubscriptionUsageClient) {
 	if os.Getenv("CLAUDE_PROXY_NO_TRAY") == "1" {
 		<-ctx.Done()
 		return
@@ -25,10 +25,10 @@ func runStatusApp(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logg
 		systray.Quit()
 	}()
 
-	systray.Run(onTrayReady(ctx, cfg, tokenMgr, logger, authResolver), onTrayExit)
+	systray.Run(onTrayReady(ctx, cfg, tokenMgr, logger, authResolver, subUsage), onTrayExit)
 }
 
-func onTrayReady(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, authResolver *ClaudeAuthResolver) func() {
+func onTrayReady(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logger *RequestLogger, authResolver *ClaudeAuthResolver, subUsage *SubscriptionUsageClient) func() {
 	return func() {
 		systray.SetIcon(iconGreen)
 		systray.SetTitle("Claude")
@@ -47,6 +47,8 @@ func onTrayReady(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logge
 		mAuth.Disable()
 		mModels := systray.AddMenuItem("Models: checking...", "")
 		mModels.Disable()
+		mLimits := systray.AddMenuItem("Limits: checking...", "")
+		mLimits.Disable()
 		mStats := systray.AddMenuItem("Stats: checking...", "")
 		mStats.Disable()
 		mLast := systray.AddMenuItem("Last request: none", "")
@@ -63,8 +65,8 @@ func onTrayReady(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logge
 
 		mQuit := systray.AddMenuItem("Quit", "")
 
-		items := trayItems{mAuth: mAuth, mModels: mModels, mStats: mStats, mLast: mLast}
-		refreshTray(cfg, authResolver, logger, items)
+		items := trayItems{mAuth: mAuth, mModels: mModels, mLimits: mLimits, mStats: mStats, mLast: mLast}
+		refreshTray(cfg, authResolver, logger, subUsage, items)
 
 		go func() {
 			ticker := time.NewTicker(30 * time.Second)
@@ -75,15 +77,15 @@ func onTrayReady(ctx context.Context, cfg *Config, tokenMgr *TokenManager, logge
 					systray.Quit()
 					return
 				case <-ticker.C:
-					refreshTray(cfg, authResolver, logger, items)
+					refreshTray(cfg, authResolver, logger, subUsage, items)
 				case <-mOpenDashboard.ClickedCh:
 					_ = exec.Command("open", localURL(cfg.AdminListen)).Start()
 				case <-mOpenHealth.ClickedCh:
 					_ = exec.Command("open", localURL(cfg.Listen)+"/healthz").Start()
 				case <-mReloadToken.ClickedCh:
-					go reloadToken(ctx, tokenMgr, cfg, authResolver, logger, items, mReloadToken)
+					go reloadToken(ctx, tokenMgr, cfg, authResolver, logger, subUsage, items, mReloadToken)
 				case <-mDiscover.ClickedCh:
-					go discoverModelsFromTray(ctx, cfg, authResolver, logger, items, mDiscover)
+					go discoverModelsFromTray(ctx, cfg, authResolver, logger, subUsage, items, mDiscover)
 				case <-mQuit.ClickedCh:
 					systray.Quit()
 					return
@@ -100,11 +102,12 @@ func onTrayExit() {
 type trayItems struct {
 	mAuth   *systray.MenuItem
 	mModels *systray.MenuItem
+	mLimits *systray.MenuItem
 	mStats  *systray.MenuItem
 	mLast   *systray.MenuItem
 }
 
-func refreshTray(cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestLogger, items trayItems) {
+func refreshTray(cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestLogger, subUsage *SubscriptionUsageClient, items trayItems) {
 	authStatus := authResolver.AuthStatus()
 	localOK, _ := authStatus["local_available"].(bool)
 	apikeyOK, _ := authStatus["apikey_available"].(bool)
@@ -116,6 +119,9 @@ func refreshTray(cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestL
 
 	items.mAuth.SetTitle(formatAuthStatus(authStatus))
 	items.mModels.SetTitle(formatModelsStatus(cfg))
+	if items.mLimits != nil {
+		items.mLimits.SetTitle(formatLimitsStatus(subUsage))
+	}
 
 	filter, rng := applyUsageRange(StatsFilter{Provider: "anthropic"}, "24h", time.Now())
 	usage := logger.GetUsage(filter, rng, cfg.TimeLocation())
@@ -135,7 +141,7 @@ func refreshTray(cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestL
 	items.mLast.SetTitle(fmt.Sprintf("Last: %s | %d | %s", last.Model, last.Status, last.Timestamp.Local().Format("15:04:05")))
 }
 
-func reloadToken(ctx context.Context, tokenMgr *TokenManager, cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestLogger, items trayItems, item *systray.MenuItem) {
+func reloadToken(ctx context.Context, tokenMgr *TokenManager, cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestLogger, subUsage *SubscriptionUsageClient, items trayItems, item *systray.MenuItem) {
 	item.SetTitle("Reloading token...")
 	item.Disable()
 	defer item.Enable()
@@ -144,22 +150,22 @@ func reloadToken(ctx context.Context, tokenMgr *TokenManager, cfg *Config, authR
 		log.Errorf("keychain reload failed: %v", err)
 		item.SetTitle("Reload failed")
 		time.AfterFunc(4*time.Second, func() { item.SetTitle("Reload Claude Token") })
-		refreshTray(cfg, authResolver, logger, items)
+		refreshTray(cfg, authResolver, logger, subUsage, items)
 		return
 	}
 	if _, err := tokenMgr.GetAccessToken(ctx); err != nil {
 		log.Errorf("token refresh failed: %v", err)
 		item.SetTitle("Token refresh failed")
 		time.AfterFunc(4*time.Second, func() { item.SetTitle("Reload Claude Token") })
-		refreshTray(cfg, authResolver, logger, items)
+		refreshTray(cfg, authResolver, logger, subUsage, items)
 		return
 	}
 	item.SetTitle("Token reloaded")
 	time.AfterFunc(3*time.Second, func() { item.SetTitle("Reload Claude Token") })
-	refreshTray(cfg, authResolver, logger, items)
+	refreshTray(cfg, authResolver, logger, subUsage, items)
 }
 
-func discoverModelsFromTray(ctx context.Context, cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestLogger, items trayItems, item *systray.MenuItem) {
+func discoverModelsFromTray(ctx context.Context, cfg *Config, authResolver *ClaudeAuthResolver, logger *RequestLogger, subUsage *SubscriptionUsageClient, items trayItems, item *systray.MenuItem) {
 	item.SetTitle("Discovering models...")
 	item.Disable()
 	defer item.Enable()
@@ -178,7 +184,7 @@ func discoverModelsFromTray(ctx context.Context, cfg *Config, authResolver *Clau
 		log.Errorf("model discovery failed: %v", err)
 		item.SetTitle("Discovery failed")
 		time.AfterFunc(4*time.Second, func() { item.SetTitle("Discover Models") })
-		refreshTray(cfg, authResolver, logger, items)
+		refreshTray(cfg, authResolver, logger, subUsage, items)
 		return
 	}
 
@@ -187,7 +193,7 @@ func discoverModelsFromTray(ctx context.Context, cfg *Config, authResolver *Clau
 		log.Errorf("saving discovered models failed: %v", err)
 		item.SetTitle("Save failed")
 		time.AfterFunc(4*time.Second, func() { item.SetTitle("Discover Models") })
-		refreshTray(cfg, authResolver, logger, items)
+		refreshTray(cfg, authResolver, logger, subUsage, items)
 		return
 	}
 
@@ -197,7 +203,29 @@ func discoverModelsFromTray(ctx context.Context, cfg *Config, authResolver *Clau
 	}
 	item.SetTitle(fmt.Sprintf("Discovered %d (%d new, %d updated) via %s/%s", len(models), added, updated, route, source))
 	time.AfterFunc(5*time.Second, func() { item.SetTitle("Discover Models") })
-	refreshTray(cfg, authResolver, logger, items)
+	refreshTray(cfg, authResolver, logger, subUsage, items)
+}
+
+func formatLimitsStatus(subUsage *SubscriptionUsageClient) string {
+	if subUsage == nil {
+		return "Limits: unavailable"
+	}
+	report := subUsage.Get(context.Background())
+	if !report.Available {
+		if report.Error != "" {
+			return "Limits: " + truncateTray(report.Error, 36)
+		}
+		return "Limits: unavailable"
+	}
+	weekly := 0.0
+	if report.Weekly != nil && report.Weekly.Utilization != nil {
+		weekly = *report.Weekly.Utilization
+	}
+	session := 0.0
+	if report.Session != nil && report.Session.Utilization != nil {
+		session = *report.Session.Utilization
+	}
+	return fmt.Sprintf("Limits: week %.0f%% · 5h %.0f%%", weekly, session)
 }
 
 func formatAuthStatus(auth map[string]any) string {

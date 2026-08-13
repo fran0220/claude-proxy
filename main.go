@@ -32,8 +32,9 @@ func main() {
 	defer logger.Close()
 
 	authResolver := NewClaudeAuthResolver(cfg, tokenMgr)
+	subUsage := NewSubscriptionUsageClient(tokenMgr)
 	router := NewClaudeRouter(cfg, logger, authResolver)
-	admin := NewAdminServer(cfg, tokenMgr, logger, prices, authResolver)
+	admin := NewAdminServer(cfg, tokenMgr, logger, prices, authResolver, subUsage)
 
 	go admin.Start(cfg.AdminListen)
 
@@ -76,7 +77,7 @@ func main() {
 	}()
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	runStatusApp(ctx, cfg, tokenMgr, logger, authResolver)
+	runStatusApp(ctx, cfg, tokenMgr, logger, authResolver, subUsage)
 	stopSignals()
 
 	log.Info("shutting down")
