@@ -80,7 +80,7 @@ async function refreshStatus() {
   try {
     const s = await API.get('/api/status');
     const auth = s.auth || {};
-    statusPill.textContent = auth.local_available ? 'keychain ok' : (auth.apikey_available ? 'api key ready' : 'auth missing');
+    statusPill.textContent = auth.local_available ? 'claude login ok' : (auth.apikey_available ? 'api key ready' : 'auth missing');
     statusPill.className = 'chip ' + (auth.local_available || auth.apikey_available ? 'good' : 'bad');
   } catch {
     statusPill.textContent = 'offline';
@@ -311,7 +311,7 @@ function logsTable(logs) {
 }
 
 async function renderRouting() {
-  setPageMeta('Routing', 'Where each model goes', 'Local Keychain or API key, plus redirects');
+  setPageMeta('Routing', 'Where each model goes', 'Claude Code login or API key, plus redirects');
   const [models, redirects, cfg] = await Promise.all([API.get('/api/models'), API.get('/api/redirects'), API.get('/api/config')]);
   app.innerHTML = `
     <div class="stack">
@@ -319,7 +319,7 @@ async function renderRouting() {
         <div class="split"><h2>Default route</h2></div>
         <p class="hint">Unknown models follow this source. Check the box to rewrite every configured model too.</p>
         <div class="form-row" style="margin-top:12px">
-          <div class="field"><label>Auth source</label><select id="claude-source"><option value="keychain" ${(cfg.claude?.source || 'keychain') !== 'apikey' ? 'selected' : ''}>Local / Keychain</option><option value="apikey" ${(cfg.claude?.source || 'keychain') === 'apikey' ? 'selected' : ''}>API key</option></select></div>
+          <div class="field"><label>Auth source</label><select id="claude-source"><option value="keychain" ${(cfg.claude?.source || 'keychain') !== 'apikey' ? 'selected' : ''}>Local / Claude Code</option><option value="apikey" ${(cfg.claude?.source || 'keychain') === 'apikey' ? 'selected' : ''}>API key</option></select></div>
           <label class="field"><span>Apply to existing models</span><input id="source-apply-models" type="checkbox" checked></label>
           <button class="primary" type="button" onclick="setClaudeSource()">Save route</button>
         </div>
@@ -367,7 +367,7 @@ function modelsConfigTable(models) {
 }
 
 async function renderAccess() {
-  setPageMeta('Access', 'Who can talk to Claude', 'Keychain token and API keys');
+  setPageMeta('Access', 'Who can talk to Claude', 'Claude Code token and API keys');
   const [cfg, keys] = await Promise.all([API.get('/api/config'), API.get('/api/keys')]);
   app.innerHTML = `
     <div class="stack">
@@ -377,7 +377,7 @@ async function renderAccess() {
         <p class="hint">Data lives in <code>${esc(cfg.data_dir)}</code>. Use <code>CLAUDE_PROXY_LOG=debug</code> for verbose logs.</p>
       </div>
       <div class="panel">
-        <div class="split"><h2>Keychain token</h2><button type="button" onclick="refreshToken()">Refresh token</button></div>
+        <div class="split"><h2>Claude Code token</h2><button type="button" onclick="refreshToken()">Refresh token</button></div>
         <div id="token-result" class="hint"></div>
       </div>
       <div class="panel">
@@ -442,7 +442,7 @@ async function setClaudeSource() {
   const applyToModels = Boolean(document.getElementById('source-apply-models')?.checked);
   if (out) out.textContent = 'Saving…';
   const res = await API.post('/api/config/source', { source, apply_to_models: applyToModels });
-  if (out) out.textContent = `Saved ${res.source === 'apikey' ? 'API key' : 'Keychain'}${res.apply_to_models ? ' and updated model routes' : ''}.`;
+  if (out) out.textContent = `Saved ${res.source === 'apikey' ? 'API key' : 'Claude Code login'}${res.apply_to_models ? ' and updated model routes' : ''}.`;
   refreshStatus();
 }
 async function addAPIKey() {

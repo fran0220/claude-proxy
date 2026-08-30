@@ -14,6 +14,8 @@ const (
 
 	AuthBearer  = "bearer"
 	AuthXAPIKey = "x-api-key"
+
+	AuthSourceClaudeCode = "claude-code"
 )
 
 type ProviderAuth struct {
@@ -88,17 +90,17 @@ func (ar *ClaudeAuthResolver) ResolveDiscoveryAuth(ctx context.Context, preferre
 
 func (ar *ClaudeAuthResolver) resolveLocal(ctx context.Context) *ProviderAuth {
 	if ar.tokenMgr == nil {
-		return &ProviderAuth{Error: fmt.Errorf("Claude token manager is not initialized"), Source: "keychain"}
+		return &ProviderAuth{Error: fmt.Errorf("Claude token manager is not initialized"), Source: AuthSourceClaudeCode}
 	}
 	token, err := ar.tokenMgr.GetAccessToken(ctx)
 	if err != nil {
-		return &ProviderAuth{Error: err, Source: "keychain"}
+		return &ProviderAuth{Error: err, Source: AuthSourceClaudeCode}
 	}
 	status := ar.tokenMgr.Status()
 	return &ProviderAuth{
 		Token:    token,
 		AuthType: AuthBearer,
-		Source:   "keychain",
+		Source:   AuthSourceClaudeCode,
 		Expires:  time.Now().Add(status.ExpiresIn),
 	}
 }
@@ -113,7 +115,7 @@ func (ar *ClaudeAuthResolver) resolveAPIKey() *ProviderAuth {
 
 func (ar *ClaudeAuthResolver) AuthStatus() map[string]any {
 	status := map[string]any{
-		"local_source":     "keychain",
+		"local_source":     AuthSourceClaudeCode,
 		"apikey_available": len(ar.cfg.AllAPIKeys()) > 0,
 	}
 	if ar.tokenMgr == nil {

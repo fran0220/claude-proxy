@@ -21,7 +21,8 @@ const (
 )
 
 // TokenManager manages the lifecycle of Claude OAuth tokens.
-// It reads from Keychain on startup and automatically refreshes before expiry.
+// It reads from Claude Code's platform credential store on startup and
+// automatically refreshes before expiry.
 type TokenManager struct {
 	mu           sync.RWMutex
 	accessToken  string
@@ -30,9 +31,8 @@ type TokenManager struct {
 	lastRefresh  time.Time
 	lastError    error
 	// extras carries non-token fields (scopes, subscriptionType, rateLimitTier)
-	// captured from the keychain entry at load time so we can preserve them
-	// when writing rotated tokens back via WriteClaudeKeychainCredentials.
-	extras     KeychainCredentials
+	// captured at load time so we can preserve them when writing rotated tokens.
+	extras     ClaudeCredentials
 	sfGroup    singleflight.Group
 	httpClient *http.Client
 }
@@ -49,12 +49,12 @@ func NewTokenManager() *TokenManager {
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 
-	// Load initial credentials from Keychain
-	if err := tm.loadFromKeychain(); err != nil {
-		log.Warnf("failed to load OAuth token from Keychain: %v", err)
+	// Load initial credentials from Claude Code's platform store.
+	if err := tm.loadFromCredentialStore(); err != nil {
+		log.Warnf("failed to load OAuth token from Claude Code credentials: %v", err)
 		tm.lastError = err
 	} else {
-		log.Infof("loaded OAuth token from Keychain (expires in %s)", time.Until(tm.expiresAt).Round(time.Second))
+		log.Infof("loaded OAuth token from Claude Code credentials (expires in %s)", time.Until(tm.expiresAt).Round(time.Second))
 	}
 
 	// Start background refresh loop
@@ -120,8 +120,8 @@ func (tm *TokenManager) Status() TokenStatus {
 	return TokenStatus{Valid: true, ExpiresIn: remaining}
 }
 
-func (tm *TokenManager) loadFromKeychain() error {
-	creds, err := ReadClaudeKeychainCredentials()
+func (tm *TokenManager) loadFromCredentialStore() error {
+	creds, err := ReadClaudeCredentials()
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (tm *TokenManager) loadFromKeychain() error {
 	tm.accessToken = creds.AccessToken
 	tm.refreshToken = creds.RefreshToken
 	tm.expiresAt = time.UnixMilli(creds.ExpiresAt)
-	tm.extras = KeychainCredentials{
+	tm.extras = ClaudeCredentials{
 		Scopes:           creds.Scopes,
 		SubscriptionType: creds.SubscriptionType,
 		RateLimitTier:    creds.RateLimitTier,
@@ -167,8 +167,8 @@ func (tm *TokenManager) refresh(ctx context.Context) error {
 		tm.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 		tm.lastRefresh = time.Now()
 		tm.lastError = nil
-		// Snapshot the values we need outside the lock for the keychain write.
-		persist := KeychainCredentials{
+		// Snapshot the values we need outside the lock for the credential write.
+		persist := ClaudeCredentials{
 			AccessToken:      tm.accessToken,
 			RefreshToken:     tm.refreshToken,
 			ExpiresAt:        tm.expiresAt.UnixMilli(),
@@ -178,14 +178,13 @@ func (tm *TokenManager) refresh(ctx context.Context) error {
 		}
 		tm.mu.Unlock()
 
-		// Write the rotated credentials back to Keychain so Claude.app and other
-		// Claude Code-compatible tools can see the new refresh token. Anthropic rotates the
-		// refresh token on every call; without write-back the old one in the
-		// keychain becomes invalid_grant for any cold-starting process.
-		if err := WriteClaudeKeychainCredentials(&persist); err != nil {
-			log.Warnf("failed to write refreshed token back to Keychain: %v", err)
+		// Write the rotated credentials back so other Claude Code-compatible
+		// processes can see the new refresh token. Anthropic rotates refresh tokens
+		// on every call; without write-back the stored token becomes invalid_grant.
+		if err := WriteClaudeCredentials(&persist); err != nil {
+			log.Warnf("failed to write refreshed token back to Claude Code credentials: %v", err)
 		} else {
-			log.Debug("refreshed token written back to Keychain")
+			log.Debug("refreshed token written back to Claude Code credentials")
 		}
 
 		log.Infof("token refreshed, expires in %ds", expiresIn)
@@ -261,12 +260,12 @@ func (tm *TokenManager) refreshLoop() {
 			log.Info("token approaching expiry, refreshing...")
 			if err := tm.refresh(context.Background()); err != nil {
 				log.Errorf("background token refresh failed: %v", err)
-				// Refresh token may be stale — try reloading from Keychain
-				log.Info("reloading token from Keychain...")
-				if err2 := tm.loadFromKeychain(); err2 != nil {
-					log.Errorf("keychain reload also failed: %v", err2)
+				// Refresh token may be stale — try reloading the platform store.
+				log.Info("reloading token from Claude Code credentials...")
+				if err2 := tm.loadFromCredentialStore(); err2 != nil {
+					log.Errorf("credential reload also failed: %v", err2)
 				} else {
-					log.Info("token reloaded from Keychain")
+					log.Info("token reloaded from Claude Code credentials")
 				}
 			}
 		}

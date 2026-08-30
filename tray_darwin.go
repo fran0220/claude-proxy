@@ -146,7 +146,7 @@ func reloadToken(ctx context.Context, tokenMgr *TokenManager, cfg *Config, authR
 	item.Disable()
 	defer item.Enable()
 
-	if err := tokenMgr.loadFromKeychain(); err != nil {
+	if err := tokenMgr.loadFromCredentialStore(); err != nil {
 		log.Errorf("keychain reload failed: %v", err)
 		item.SetTitle("Reload failed")
 		time.AfterFunc(4*time.Second, func() { item.SetTitle("Reload Claude Token") })

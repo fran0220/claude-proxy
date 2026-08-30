@@ -1,13 +1,13 @@
 # claude-proxy
 
-Claude-only local reverse proxy with Claude Code OAuth/API-key authentication, request logging, token usage statistics, a macOS status bar app, and a small embedded admin dashboard.
+Claude-only reverse proxy with Claude Code OAuth/API-key authentication, request logging, token usage statistics, a macOS status bar app, Linux daemon support, and a small embedded admin dashboard.
 
 ## What it does
 
 - Proxies Anthropic-compatible Claude API calls:
   - `POST /v1/messages`
   - `POST /v1/messages/count_tokens`
-- Uses Claude Code OAuth credentials from macOS Keychain by default.
+- Uses Claude Code OAuth credentials from macOS Keychain or the Linux credentials file by default.
 - Can fall back to configured Anthropic API keys.
 - Records request logs and token usage into SQLite, including a per-request price snapshot.
 - Estimates equivalent Anthropic API cost from [models.dev](https://models.dev) list prices (`input` / `output` / `cache_read` / `cache_write`).
@@ -54,6 +54,16 @@ Install it:
 
 ```bash
 cp -R ClaudeProxy.app /Applications/
+```
+
+On Linux the proxy runs headless and reads Claude Code credentials from
+`~/.claude/.credentials.json`, or `$CLAUDE_CONFIG_DIR/.credentials.json` when that environment
+variable is set. Run it as the same Unix user that performed `claude auth login` (or interactive
+`/login`) so the mode-`0600` credentials file is accessible and refreshed tokens can be written back.
+
+```bash
+CGO_ENABLED=0 go build -o claude-proxy .
+./claude-proxy
 ```
 
 Open the dashboard:
@@ -139,7 +149,7 @@ curl http://localhost:9327/v1/messages \
 Dashboard API routes require the separate admin token. The dashboard asks for it on load and keeps
 it in browser session storage until the tab is closed or you log out.
 
-Usage windows are rolling (`24h`, `7d`, `30d`, `all`). Costs are equivalent official API dollars, not Claude Code subscription spend. Local/Keychain traffic is labeled as equivalent. Unpriced models stay `null` instead of `$0`. New requests snapshot the current catalog rate so later price changes do not rewrite history.
+Usage windows are rolling (`24h`, `7d`, `30d`, `all`). Costs are equivalent official API dollars, not Claude Code subscription spend. Local/Claude Code traffic is labeled as equivalent. Unpriced models stay `null` instead of `$0`. New requests snapshot the current catalog rate so later price changes do not rewrite history.
 
 Unknown model IDs are allowed and default to the configured default route. The model list is for dashboard/config convenience, not a hard whitelist.
 
