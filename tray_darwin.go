@@ -146,16 +146,9 @@ func reloadToken(ctx context.Context, tokenMgr *TokenManager, cfg *Config, authR
 	item.Disable()
 	defer item.Enable()
 
-	if err := tokenMgr.loadFromCredentialStore(); err != nil {
+	if err := tokenMgr.Reload(ctx); err != nil {
 		log.Errorf("keychain reload failed: %v", err)
 		item.SetTitle("Reload failed")
-		time.AfterFunc(4*time.Second, func() { item.SetTitle("Reload Claude Token") })
-		refreshTray(cfg, authResolver, logger, subUsage, items)
-		return
-	}
-	if _, err := tokenMgr.GetAccessToken(ctx); err != nil {
-		log.Errorf("token refresh failed: %v", err)
-		item.SetTitle("Token refresh failed")
 		time.AfterFunc(4*time.Second, func() { item.SetTitle("Reload Claude Token") })
 		refreshTray(cfg, authResolver, logger, subUsage, items)
 		return

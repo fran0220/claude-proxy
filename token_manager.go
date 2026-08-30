@@ -120,6 +120,14 @@ func (tm *TokenManager) Status() TokenStatus {
 	return TokenStatus{Valid: true, ExpiresIn: remaining}
 }
 
+func (tm *TokenManager) Reload(ctx context.Context) error {
+	if err := tm.loadFromCredentialStore(); err != nil {
+		return err
+	}
+	_, err := tm.GetAccessToken(ctx)
+	return err
+}
+
 func (tm *TokenManager) loadFromCredentialStore() error {
 	creds, err := ReadClaudeCredentials()
 	if err != nil {

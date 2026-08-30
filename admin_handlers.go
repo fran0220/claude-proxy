@@ -43,8 +43,8 @@ func (s *AdminServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	s.cfg.mu.RUnlock()
 
 	writeJSON(w, map[string]any{
-		"uptime": time.Since(s.startAt).Round(time.Second).String(),
-		"stats":  stats,
+		"uptime":       time.Since(s.startAt).Round(time.Second).String(),
+		"stats":        stats,
 		"usage_24h":    usage,
 		"subscription": subscription,
 		"recent":       recentLogs,
@@ -203,7 +203,7 @@ func (s *AdminServer) handleTokenRefresh(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := s.tokenMgr.refresh(r.Context()); err != nil {
+	if err := s.tokenMgr.Reload(r.Context()); err != nil {
 		writeJSON(w, map[string]any{"status": "error", "message": err.Error()})
 		return
 	}

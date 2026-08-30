@@ -377,7 +377,7 @@ async function renderAccess() {
         <p class="hint">Data lives in <code>${esc(cfg.data_dir)}</code>. Use <code>CLAUDE_PROXY_LOG=debug</code> for verbose logs.</p>
       </div>
       <div class="panel">
-        <div class="split"><h2>Claude Code token</h2><button type="button" onclick="refreshToken()">Refresh token</button></div>
+        <div class="split"><h2>Claude Code token</h2><button type="button" onclick="refreshToken()">Reload token</button></div>
         <div id="token-result" class="hint"></div>
       </div>
       <div class="panel">
@@ -463,9 +463,9 @@ async function testAPIKeyInput() {
 }
 async function refreshToken() {
   const out = document.getElementById('token-result');
-  out.textContent = 'Refreshing…';
+  out.textContent = 'Reloading…';
   const res = await API.post('/api/token/refresh', {});
-  out.textContent = res.status === 'ok' ? 'Token refreshed.' : (res.message || 'Refresh failed');
+  out.textContent = res.status === 'ok' ? 'Token reloaded.' : (res.message || 'Reload failed');
 }
 async function setRedirect() {
   await API.post('/api/redirects/set', { from: val('redir-from'), to: val('redir-to') });
