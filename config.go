@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type Config struct {
 	Retry          RetryConfig       `yaml:"retry" json:"retry"`
 	Pricing        PricingConfig     `yaml:"pricing,omitempty" json:"pricing,omitempty"`
 	Debug          DebugConfig       `yaml:"debug,omitempty" json:"debug,omitempty"`
+	Security       SecurityConfig    `yaml:"security" json:"-"`
 }
 
 type ClaudeConfig struct {
@@ -74,10 +76,23 @@ type PricingConfig struct {
 	Overrides map[string]ModelPrice `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
 
+type SecurityConfig struct {
+	AccessToken string `yaml:"access-token" json:"-"`
+	AdminToken  string `yaml:"admin-token" json:"-"`
+}
+
 func generateID() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+func generateToken(prefix string) string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("secure random unavailable: %v", err))
+	}
+	return prefix + base64.RawURLEncoding.EncodeToString(b)
 }
 
 func defaultConfigDir() string {
@@ -206,6 +221,14 @@ func (c *Config) normalize() bool {
 	if c.Debug.DumpPath == "" {
 		c.Debug.DumpPath = filepath.Join(os.TempDir(), "claude-proxy-last-request.json")
 	}
+	if strings.TrimSpace(c.Security.AccessToken) == "" {
+		c.Security.AccessToken = generateToken("cp_")
+		changed = true
+	}
+	if strings.TrimSpace(c.Security.AdminToken) == "" {
+		c.Security.AdminToken = generateToken("cp_admin_")
+		changed = true
+	}
 	return changed
 }
 
@@ -239,14 +262,23 @@ func (c *Config) Save() error {
 	if c.path == "" {
 		c.path = defaultConfigPath()
 	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	return os.WriteFile(c.path, data, 0o644)
+	return writePrivateFile(c.path, data)
+}
+
+func (c *Config) AccessToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Security.AccessToken
+}
+
+func (c *Config) AdminToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Security.AdminToken
 }
 
 func (c *Config) DataDirPath() string {

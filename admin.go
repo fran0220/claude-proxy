@@ -74,20 +74,20 @@ func (s *AdminServer) Start(addr string) {
 	}
 	mux.Handle("/", http.FileServer(http.FS(webContent)))
 
-	server := &http.Server{Addr: addr, Handler: corsMiddleware(mux)}
+	server := &http.Server{Addr: addr, Handler: s.requireAdminToken(mux)}
 	log.Infof("admin dashboard on http://localhost%s", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Errorf("admin server error: %v", err)
 	}
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func (s *AdminServer) requireAdminToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+		if len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/api/" && !requestTokenMatches(r, s.cfg.AdminToken()) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid admin token"}` + "\n"))
 			return
 		}
 		next.ServeHTTP(w, r)

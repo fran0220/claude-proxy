@@ -3,23 +3,40 @@ const pageKicker = document.getElementById('page-kicker');
 const pageTitle = document.getElementById('page-title');
 const pageSubtitle = document.getElementById('page-subtitle');
 const statusPill = document.getElementById('status-pill');
+const logoutBtn = document.getElementById('logout-btn');
+const adminTokenKey = 'claude-proxy-admin-token';
 let currentPage = 'usage';
 let usageRange = '24h';
 
+class APIError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function adminToken() {
+  return sessionStorage.getItem(adminTokenKey) || '';
+}
+
 const API = {
-  async get(path) {
-    const res = await fetch(path);
-    if (!res.ok) throw new Error(await res.text());
+  async request(path, options, token) {
+    const headers = new Headers(options?.headers || {});
+    const credential = token === undefined ? adminToken() : token;
+    if (credential) headers.set('authorization', 'Bearer ' + credential);
+    const res = await fetch(path, { ...(options || {}), headers });
+    if (!res.ok) throw new APIError(res.status, await res.text());
     return res.json();
   },
-  async post(path, body) {
-    const res = await fetch(path, {
+  get(path, token) {
+    return this.request(path, {}, token);
+  },
+  post(path, body) {
+    return this.request(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body || {})
     });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
   }
 };
 
@@ -59,6 +76,7 @@ function rangeButtons(active) {
 }
 
 async function refreshStatus() {
+  if (!adminToken()) return;
   try {
     const s = await API.get('/api/status');
     const auth = s.auth || {};
@@ -70,7 +88,48 @@ async function refreshStatus() {
   }
 }
 
+function renderLogin(message) {
+  document.querySelectorAll('.nav').forEach(n => { n.disabled = true; n.classList.remove('active'); });
+  logoutBtn.hidden = true;
+  statusPill.textContent = 'locked';
+  statusPill.className = 'chip';
+  setPageMeta('Security', 'Unlock the dashboard', 'Enter the separate admin token for this proxy');
+  app.innerHTML = `<form class="panel login" onsubmit="loginAdmin(event)">
+    <h2>Admin token</h2>
+    <p class="hint">The token stays in this browser tab and is sent only to authenticated dashboard API calls.</p>
+    <div class="field"><label for="admin-token">Token</label><input id="admin-token" type="password" autocomplete="current-password" autofocus required></div>
+    <button class="primary" type="submit">Unlock</button>
+    <div id="login-result" class="error">${esc(message || '')}</div>
+  </form>`;
+}
+
+async function loginAdmin(event) {
+  event.preventDefault();
+  const token = val('admin-token');
+  const result = document.getElementById('login-result');
+  if (result) result.textContent = 'Checking…';
+  try {
+    await API.get('/api/status', token);
+    sessionStorage.setItem(adminTokenKey, token);
+    document.querySelectorAll('.nav').forEach(n => { n.disabled = false; });
+    logoutBtn.hidden = false;
+    await render();
+  } catch (err) {
+    if (result) result.textContent = err.status === 401 ? 'Invalid admin token.' : (err.message || 'Login failed.');
+  }
+}
+
+function logoutAdmin() {
+  sessionStorage.removeItem(adminTokenKey);
+  renderLogin();
+}
+
 async function render() {
+  if (!adminToken()) {
+    renderLogin();
+    return;
+  }
+  logoutBtn.hidden = false;
   app.innerHTML = '<div class="panel empty">Loading…</div>';
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.page === currentPage));
   try {
@@ -79,6 +138,11 @@ async function render() {
     if (currentPage === 'routing') await renderRouting();
     if (currentPage === 'access') await renderAccess();
   } catch (err) {
+    if (err.status === 401) {
+      sessionStorage.removeItem(adminTokenKey);
+      renderLogin('Your admin token is invalid or has changed.');
+      return;
+    }
     app.innerHTML = `<div class="panel error"><strong>Failed</strong><pre>${esc(err.message || err)}</pre></div>`;
   }
   refreshStatus();
@@ -410,6 +474,7 @@ async function setRedirect() {
 
 document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
 document.getElementById('refresh-btn').addEventListener('click', render);
+logoutBtn.addEventListener('click', logoutAdmin);
 window.switchPage = switchPage;
 window.setUsageRange = setUsageRange;
 window.refreshPrices = refreshPrices;
@@ -423,7 +488,7 @@ window.removeAPIKey = removeAPIKey;
 window.testAPIKeyInput = testAPIKeyInput;
 window.refreshToken = refreshToken;
 window.setRedirect = setRedirect;
+window.loginAdmin = loginAdmin;
 
-refreshStatus();
 render();
 setInterval(refreshStatus, 10000);

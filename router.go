@@ -43,6 +43,11 @@ func (rt *ClaudeRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProxyError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
 		}
+		if !requestTokenMatches(r, rt.cfg.AccessToken()) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeProxyError(w, http.StatusUnauthorized, "authentication_error", "invalid proxy access token")
+			return
+		}
 		rt.handleClaude(w, r, start)
 		return
 	default:

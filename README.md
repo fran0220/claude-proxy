@@ -14,6 +14,7 @@ Claude-only local reverse proxy with Claude Code OAuth/API-key authentication, r
 - Provides an embedded dashboard for plan limits, 24h/7d/30d/all usage, request logs, model routing, API keys, and token refresh.
 - Shows a macOS status bar icon with auth/model/stats/last-request status and quick actions.
 - Dynamically discovers available Claude models via Anthropic `GET /v1/models`.
+- Requires separate client and dashboard access tokens generated on first run.
 
 It intentionally does **not** include Amp upstream routing, OpenAI/Codex, Gemini, or custom providers.
 
@@ -97,6 +98,10 @@ listen: ":9327"
 admin-listen: ":9328"
 data-dir: ~/.claude-proxy
 
+security:
+  access-token: cp_...       # x-api-key or Bearer token for proxy clients
+  admin-token: cp_admin_...  # Bearer token entered in the dashboard login
+
 claude:
   source: keychain # keychain | apikey
   entries:
@@ -119,6 +124,20 @@ pricing:
   timezone: "" # empty uses the host local timezone for daily/hourly buckets
   overrides: {} # optional model id -> {input, output, cache_read, cache_write} USD / 1M tokens
 ```
+
+The config is written atomically with file mode `0600` because it contains secrets. The proxy
+accepts its access token through either header, making it compatible with Anthropic SDKs and
+generic bearer-token clients:
+
+```bash
+curl http://localhost:9327/v1/messages \
+  -H 'x-api-key: cp_...' \
+  -H 'content-type: application/json' \
+  -d '{"model":"claude-sonnet-4-6","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Dashboard API routes require the separate admin token. The dashboard asks for it on load and keeps
+it in browser session storage until the tab is closed or you log out.
 
 Usage windows are rolling (`24h`, `7d`, `30d`, `all`). Costs are equivalent official API dollars, not Claude Code subscription spend. Local/Keychain traffic is labeled as equivalent. Unpriced models stay `null` instead of `$0`. New requests snapshot the current catalog rate so later price changes do not rewrite history.
 

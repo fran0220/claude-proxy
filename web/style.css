@@ -58,7 +58,8 @@ p { text-wrap: pretty; }
 }
 .nav:hover, .nav:focus-visible { color: var(--ink); outline: none; }
 .nav.active { color: var(--ink); background: #2a231b; }
-.rail-foot { margin-top: auto; }
+.rail-foot { margin-top: auto; display: grid; gap: 10px; justify-items: start; }
+.logout { padding: 4px 9px; font-size: 12px; color: var(--mute); }
 
 .stage { min-width: 0; padding: 28px 36px 56px; }
 .mast {
@@ -93,6 +94,9 @@ h1 { margin: 0; font-family: Newsreader, Georgia, serif; font-size: 40px; font-w
   color: var(--mute);
   text-transform: uppercase;
 }
+.login { width: min(460px, 100%); margin: 9vh auto 0; display: grid; gap: 16px; }
+.login h2, .login p, .login .error { margin: 0; }
+.login button { justify-self: start; }
 .split { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
 .stack { display: grid; gap: 18px; }
 .grid { display: grid; gap: 14px; }
