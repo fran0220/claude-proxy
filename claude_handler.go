@@ -120,7 +120,7 @@ func applyDirectClaudeHeaders(req *http.Request, original *http.Request, auth *P
 	req.Header.Set("Anthropic-Beta", beta)
 
 	req.Header.Set("X-App", "cli")
-	req.Header.Set("User-Agent", "claude-cli/2.1.81 (external, cli)")
+	req.Header.Set("User-Agent", "claude-cli/"+claudeCodeVersion+" (external, cli)")
 	req.Header.Set("X-Stainless-Lang", "js")
 	req.Header.Set("X-Stainless-Runtime", "node")
 	req.Header.Set("X-Stainless-Runtime-Version", "v22.16.0")

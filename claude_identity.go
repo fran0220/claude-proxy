@@ -13,8 +13,6 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const billingVersion = "2.1.81"
-
 // stableBuildHash is generated once per process to keep billing headers stable
 // across requests, which is essential for Anthropic prompt caching.
 var (
@@ -50,7 +48,7 @@ func injectClaudeCodeIdentity(body []byte, stableUserID string) []byte {
 	// but the billing header is prepended before the system prompt, so the cch doesn't
 	// need to be body-dependent. A stable value preserves cache hits.
 	buildHash := getStableBuildHash()
-	billingText := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;", billingVersion, buildHash)
+	billingText := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;", claudeCodeVersion, buildHash)
 	billingBlock := fmt.Sprintf(`{"type":"text","text":"%s"}`, billingText)
 
 	agentBlock := `{"type":"text","text":"You are a Claude agent, built on Anthropic's Claude Agent SDK."}`

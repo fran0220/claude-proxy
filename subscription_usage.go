@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
 )
 
 const (
@@ -26,16 +25,16 @@ type UsageWindow struct {
 }
 
 type ExtraUsage struct {
-	IsEnabled           bool     `json:"is_enabled"`
-	MonthlyLimit        *float64 `json:"monthly_limit"`
-	UsedCredits         *float64 `json:"used_credits"`
-	Utilization         *float64 `json:"utilization"`
-	Currency            string   `json:"currency,omitempty"`
-	DecimalPlaces       int      `json:"decimal_places,omitempty"`
-	DisabledReason      string   `json:"disabled_reason,omitempty"`
-	UserDisabled        bool     `json:"user_disabled"`
-	SpendLimitReached   bool     `json:"spend_limit_reached"`
-	CreditsEverEnabled  bool     `json:"credits_ever_enabled"`
+	IsEnabled          bool     `json:"is_enabled"`
+	MonthlyLimit       *float64 `json:"monthly_limit"`
+	UsedCredits        *float64 `json:"used_credits"`
+	Utilization        *float64 `json:"utilization"`
+	Currency           string   `json:"currency,omitempty"`
+	DecimalPlaces      int      `json:"decimal_places,omitempty"`
+	DisabledReason     string   `json:"disabled_reason,omitempty"`
+	UserDisabled       bool     `json:"user_disabled"`
+	SpendLimitReached  bool     `json:"spend_limit_reached"`
+	CreditsEverEnabled bool     `json:"credits_ever_enabled"`
 }
 
 type LimitScopeModel struct {
@@ -59,31 +58,31 @@ type OAuthLimit struct {
 }
 
 type OAuthUsagePayload struct {
-	FiveHour           *UsageWindow `json:"five_hour"`
-	SevenDay           *UsageWindow `json:"seven_day"`
-	SevenDayOAuthApps  *UsageWindow `json:"seven_day_oauth_apps"`
-	SevenDayOpus       *UsageWindow `json:"seven_day_opus"`
-	SevenDaySonnet     *UsageWindow `json:"seven_day_sonnet"`
-	SevenDayCowork     *UsageWindow `json:"seven_day_cowork"`
-	SevenDayOmelette   *UsageWindow `json:"seven_day_omelette"`
-	ExtraUsage         *ExtraUsage  `json:"extra_usage"`
-	Limits             []OAuthLimit `json:"limits"`
-	RawSpend           json.RawMessage `json:"spend,omitempty"`
+	FiveHour          *UsageWindow    `json:"five_hour"`
+	SevenDay          *UsageWindow    `json:"seven_day"`
+	SevenDayOAuthApps *UsageWindow    `json:"seven_day_oauth_apps"`
+	SevenDayOpus      *UsageWindow    `json:"seven_day_opus"`
+	SevenDaySonnet    *UsageWindow    `json:"seven_day_sonnet"`
+	SevenDayCowork    *UsageWindow    `json:"seven_day_cowork"`
+	SevenDayOmelette  *UsageWindow    `json:"seven_day_omelette"`
+	ExtraUsage        *ExtraUsage     `json:"extra_usage"`
+	Limits            []OAuthLimit    `json:"limits"`
+	RawSpend          json.RawMessage `json:"spend,omitempty"`
 }
 
 type SubscriptionUsage struct {
-	Available      bool              `json:"available"`
-	FetchedAt      *time.Time        `json:"fetched_at,omitempty"`
-	Stale          bool              `json:"stale"`
-	Error          string            `json:"error,omitempty"`
-	Subscription   string            `json:"subscription,omitempty"`
-	RateLimitTier  string            `json:"rate_limit_tier,omitempty"`
-	Session        *UsageWindow      `json:"session,omitempty"`
-	Weekly         *UsageWindow      `json:"weekly,omitempty"`
-	WeeklyOpus     *UsageWindow      `json:"weekly_opus,omitempty"`
-	WeeklySonnet   *UsageWindow      `json:"weekly_sonnet,omitempty"`
-	Limits         []OAuthLimit      `json:"limits,omitempty"`
-	ExtraUsage     *ExtraUsage       `json:"extra_usage,omitempty"`
+	Available     bool         `json:"available"`
+	FetchedAt     *time.Time   `json:"fetched_at,omitempty"`
+	Stale         bool         `json:"stale"`
+	Error         string       `json:"error,omitempty"`
+	Subscription  string       `json:"subscription,omitempty"`
+	RateLimitTier string       `json:"rate_limit_tier,omitempty"`
+	Session       *UsageWindow `json:"session,omitempty"`
+	Weekly        *UsageWindow `json:"weekly,omitempty"`
+	WeeklyOpus    *UsageWindow `json:"weekly_opus,omitempty"`
+	WeeklySonnet  *UsageWindow `json:"weekly_sonnet,omitempty"`
+	Limits        []OAuthLimit `json:"limits,omitempty"`
+	ExtraUsage    *ExtraUsage  `json:"extra_usage,omitempty"`
 }
 
 type SubscriptionUsageClient struct {
@@ -146,7 +145,7 @@ func (c *SubscriptionUsageClient) refresh(ctx context.Context) (SubscriptionUsag
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	req.Header.Set("User-Agent", "claude-code/"+billingVersion)
+	req.Header.Set("User-Agent", "claude-code/"+claudeCodeVersion)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
