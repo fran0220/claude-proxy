@@ -16,22 +16,11 @@ func ReadClaudeCredentials() (*ClaudeCredentials, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get current user: %w", err)
 	}
-
-	cmd := exec.Command("security", "find-generic-password",
-		"-s", keychainService,
-		"-a", account,
-		"-w",
-	)
-	out, err := cmd.Output()
+	raw, err := readClaudeCredentialDocument(account)
 	if err != nil {
-		return nil, fmt.Errorf("keychain read failed (service=%q, account=%q): %w", keychainService, account, err)
+		return nil, err
 	}
-
-	raw := strings.TrimSpace(string(out))
-	if raw == "" {
-		return nil, fmt.Errorf("keychain entry is empty")
-	}
-	return decodeClaudeCredentials([]byte(raw))
+	return decodeClaudeCredentials(raw)
 }
 
 // WriteClaudeCredentials persists Claude Code OAuth credentials back
@@ -46,7 +35,11 @@ func WriteClaudeCredentials(credentials *ClaudeCredentials) error {
 	if err != nil {
 		return fmt.Errorf("get current user: %w", err)
 	}
-	payload, err := mergeClaudeCredentials(nil, credentials)
+	existing, err := readClaudeCredentialDocument(account)
+	if err != nil {
+		return fmt.Errorf("refusing to replace unreadable Claude Code credentials: %w", err)
+	}
+	payload, err := mergeClaudeCredentials(existing, credentials)
 	if err != nil {
 		return fmt.Errorf("marshal keychain payload: %w", err)
 	}
@@ -60,6 +53,23 @@ func WriteClaudeCredentials(credentials *ClaudeCredentials) error {
 		return fmt.Errorf("keychain write failed (service=%q): %w: %s", keychainService, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func readClaudeCredentialDocument(account string) ([]byte, error) {
+	cmd := exec.Command("security", "find-generic-password",
+		"-s", keychainService,
+		"-a", account,
+		"-w",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("keychain read failed (service=%q, account=%q): %w", keychainService, account, err)
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return nil, fmt.Errorf("keychain entry is empty")
+	}
+	return []byte(raw), nil
 }
 
 func currentUsername() (string, error) {
