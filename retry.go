@@ -11,6 +11,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const maxRetryAfter = 30 * time.Second
+
 // Retryer handles automatic retry for transient HTTP errors (429, 529).
 type Retryer struct {
 	maxAttempts  int
@@ -32,7 +34,6 @@ func NewRetryer(maxAttempts int, initialDelay time.Duration) *Retryer {
 // (since request bodies can only be read once).
 // On success (non-retryable status), returns the response for the caller to consume.
 func (r *Retryer) Do(ctx context.Context, client *http.Client, newRequest func() (*http.Request, error)) (*http.Response, error) {
-	var lastResp *http.Response
 	var lastErr error
 
 	for attempt := 0; attempt < r.maxAttempts; attempt++ {
@@ -57,6 +58,9 @@ func (r *Retryer) Do(ctx context.Context, client *http.Client, newRequest func()
 		if !isRetryableStatus(resp.StatusCode) {
 			return resp, nil
 		}
+		if attempt == r.maxAttempts-1 {
+			return resp, nil
+		}
 
 		// Retryable status — read body for debugging, then retry
 		respBody, _ := io.ReadAll(resp.Body)
@@ -67,16 +71,12 @@ func (r *Retryer) Do(ctx context.Context, client *http.Client, newRequest func()
 			bodyPreview = bodyPreview[:200]
 		}
 		log.Warnf("retryable status %d (attempt %d/%d): %s — retrying in %s", resp.StatusCode, attempt+1, r.maxAttempts, bodyPreview, delay)
-		lastResp = resp
 
 		if waitErr := r.wait(ctx, delay); waitErr != nil {
 			return nil, waitErr
 		}
 	}
 
-	if lastResp != nil {
-		return lastResp, nil // Return last retryable response so caller can forward the error
-	}
 	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
@@ -97,7 +97,7 @@ func (r *Retryer) backoff(attempt int) time.Duration {
 func (r *Retryer) retryDelay(resp *http.Response, attempt int) time.Duration {
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		if seconds, err := strconv.Atoi(ra); err == nil && seconds > 0 {
-			return time.Duration(seconds) * time.Second
+			return min(time.Duration(seconds)*time.Second, maxRetryAfter)
 		}
 	}
 	return r.backoff(attempt)

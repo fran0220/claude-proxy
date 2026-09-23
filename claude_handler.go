@@ -13,9 +13,18 @@ import (
 )
 
 const (
-	anthropicAPIBase    = "https://api.anthropic.com"
-	defaultAntropicBeta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05"
+	anthropicAPIBase     = "https://api.anthropic.com"
+	defaultAnthropicBeta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11"
 )
+
+var claudeCodeForwardHeaders = []string{
+	"X-Claude-Code-Session-Id",
+	"X-Claude-Code-Request-Class",
+	"X-Claude-Code-Agent-Type",
+	"X-Claude-Code-Prev-Tool-Durations",
+	"X-Claude-Code-Compaction",
+	"X-Claude-Code-Context-Compacted",
+}
 
 type ClaudeHandler struct {
 	cfg     *Config
@@ -82,8 +91,13 @@ func (h *ClaudeHandler) Handle(w http.ResponseWriter, r *http.Request, body []by
 	w.WriteHeader(resp.StatusCode)
 
 	if isStream && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		usage := h.streamResponsePassthrough(w, resp.Body, renameTools)
-		h.logger.RecordResultID(logID, model, resp.StatusCode, usage, 0, "", "", "")
+		usage, streamErr := h.streamResponsePassthrough(w, resp.Body, renameTools)
+		errMsg := ""
+		if streamErr != nil {
+			errMsg = streamErr.Error()
+			log.Warnf("SSE stream passthrough error: %v", streamErr)
+		}
+		h.logger.RecordResultID(logID, model, resp.StatusCode, usage, 0, errMsg, "", "")
 		return
 	}
 
@@ -112,7 +126,7 @@ func applyDirectClaudeHeaders(req *http.Request, original *http.Request, auth *P
 
 	beta := original.Header.Get("Anthropic-Beta")
 	if beta == "" {
-		beta = defaultAntropicBeta
+		beta = defaultAnthropicBeta
 	} else {
 		beta = ensureAnthropicBeta(beta, "claude-code-20250219")
 	}
@@ -123,13 +137,18 @@ func applyDirectClaudeHeaders(req *http.Request, original *http.Request, auth *P
 	req.Header.Set("User-Agent", "claude-cli/"+claudeCodeVersion+" (external, cli)")
 	req.Header.Set("X-Stainless-Lang", "js")
 	req.Header.Set("X-Stainless-Runtime", "node")
-	req.Header.Set("X-Stainless-Runtime-Version", "v22.16.0")
-	req.Header.Set("X-Stainless-Package-Version", "0.80.0")
+	req.Header.Set("X-Stainless-Runtime-Version", "v26.3.0")
+	req.Header.Set("X-Stainless-Package-Version", "0.112.1")
 	req.Header.Set("X-Stainless-Os", "MacOS")
 	req.Header.Set("X-Stainless-Arch", "arm64")
 	req.Header.Set("X-Stainless-Retry-Count", "0")
 	req.Header.Set("X-Stainless-Timeout", "600")
 	req.Header.Set("Connection", "keep-alive")
+	for _, header := range claudeCodeForwardHeaders {
+		if value := original.Header.Get(header); value != "" {
+			req.Header.Set(header, value)
+		}
+	}
 
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
@@ -142,39 +161,53 @@ func applyDirectClaudeHeaders(req *http.Request, original *http.Request, auth *P
 // streamResponsePassthrough copies SSE stream without modification, capturing usage.
 // Claude SSE streams emit usage in the "message_delta" event's data line, not the last data line.
 // We scan every data line for usage and keep the best (non-zero) result.
-func (h *ClaudeHandler) streamResponsePassthrough(w http.ResponseWriter, body io.Reader, renameTools bool) TokenUsage {
+func (h *ClaudeHandler) streamResponsePassthrough(w http.ResponseWriter, body io.Reader, renameTools bool) (TokenUsage, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		data, _ := io.ReadAll(body)
+		data, err := io.ReadAll(body)
 		if renameTools {
 			data = renameToolsInResponse(data)
 		}
-		_, _ = w.Write(data)
-		return ParseClaudeUsage(data)
+		if _, writeErr := w.Write(data); writeErr != nil {
+			return ParseClaudeUsage(data), writeErr
+		}
+		return ParseClaudeUsage(data), err
 	}
 
 	var usage TokenUsage
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(nil, 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			if u := ParseClaudeUsage(line[len("data: "):]); u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheCreateTokens > 0 {
-				usage = u
+	reader := bufio.NewReader(body)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			ending := line[len(line):]
+			payload := line
+			if bytes.HasSuffix(payload, []byte("\r\n")) {
+				payload = payload[:len(payload)-2]
+				ending = []byte("\r\n")
+			} else if bytes.HasSuffix(payload, []byte("\n")) {
+				payload = payload[:len(payload)-1]
+				ending = []byte("\n")
 			}
+			if bytes.HasPrefix(payload, []byte("data: ")) {
+				if u := ParseClaudeUsage(payload[len("data: "):]); u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheCreateTokens > 0 {
+					usage = u
+				}
+			}
+			if renameTools {
+				payload = renameToolsInSSELine(payload)
+			}
+			if _, err := w.Write(append(payload, ending...)); err != nil {
+				return usage, err
+			}
+			flusher.Flush()
 		}
-		if renameTools {
-			line = renameToolsInSSELine(line)
+		if readErr != nil {
+			if readErr == io.EOF {
+				return usage, nil
+			}
+			return usage, readErr
 		}
-		_, _ = w.Write(line)
-		_, _ = w.Write([]byte("\n"))
-		flusher.Flush()
 	}
-	if err := scanner.Err(); err != nil {
-		log.Warnf("SSE stream scan error: %v", err)
-	}
-
-	return usage
 }
 
 func isStreamingRequest(r *http.Request, body []byte) bool {

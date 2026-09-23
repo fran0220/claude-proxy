@@ -115,6 +115,9 @@ func defaultConfig() *Config {
 		Claude: ClaudeConfig{
 			Source: "keychain",
 			Models: []ModelEntry{
+				{Name: "claude-opus-5-5", Route: RouteLocal, DisplayName: "Claude Opus 5.5"},
+				{Name: "claude-sonnet-5", Route: RouteLocal, DisplayName: "Claude Sonnet 5"},
+				{Name: "claude-fable-5-1", Route: RouteLocal, DisplayName: "Claude Fable 5.1"},
 				{Name: "claude-opus-4-8", Route: RouteLocal, DisplayName: "Claude Opus 4.8"},
 				{Name: "claude-sonnet-4-6", Route: RouteLocal, DisplayName: "Claude Sonnet 4.6"},
 				{Name: "claude-haiku-4-5-20251001", Route: RouteLocal, DisplayName: "Claude Haiku 4.5"},

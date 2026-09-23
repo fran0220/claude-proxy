@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -44,14 +45,11 @@ func injectClaudeCodeIdentity(body []byte, stableUserID string) []byte {
 		return body
 	}
 
-	// Use a fixed cch value — the original sha256(body) was deterministic per-request
-	// but the billing header is prepended before the system prompt, so the cch doesn't
-	// need to be body-dependent. A stable value preserves cache hits.
 	buildHash := getStableBuildHash()
-	billingText := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;", claudeCodeVersion, buildHash)
+	billingText := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli;", claudeCodeVersion, buildHash)
 	billingBlock := fmt.Sprintf(`{"type":"text","text":"%s"}`, billingText)
 
-	agentBlock := `{"type":"text","text":"You are a Claude agent, built on Anthropic's Claude Agent SDK."}`
+	agentBlock := `{"type":"text","text":"You are a Claude agent, built on Anthropic's Claude Agent SDK.","cache_control":{"type":"ephemeral","ttl":"1h"}}`
 
 	system := gjson.GetBytes(body, "system")
 	var newSystem string
@@ -73,7 +71,7 @@ func injectClaudeCodeIdentity(body []byte, stableUserID string) []byte {
 	body, _ = sjson.SetRawBytes(body, "system", []byte(newSystem))
 
 	existingUserID := gjson.GetBytes(body, "metadata.user_id").String()
-	if existingUserID == "" || !isValidClaudeUserID(existingUserID) {
+	if existingUserID == "" {
 		body, _ = sjson.SetBytes(body, "metadata.user_id", stableUserID)
 	}
 
@@ -83,8 +81,16 @@ func injectClaudeCodeIdentity(body []byte, stableUserID string) []byte {
 func generateClaudeUserID() string {
 	hexBytes := make([]byte, 32)
 	_, _ = rand.Read(hexBytes)
-	hexPart := hex.EncodeToString(hexBytes)
-	return "user_" + hexPart + "_account_" + newUUID() + "_session_" + newUUID()
+	identity := struct {
+		DeviceID    string `json:"device_id"`
+		AccountUUID string `json:"account_uuid"`
+		SessionID   string `json:"session_id"`
+	}{
+		DeviceID:  hex.EncodeToString(hexBytes),
+		SessionID: newUUID(),
+	}
+	data, _ := json.Marshal(identity)
+	return string(data)
 }
 
 func newUUID() string {
@@ -96,7 +102,11 @@ func newUUID() string {
 }
 
 func isValidClaudeUserID(id string) bool {
-	return strings.HasPrefix(id, "user_") && strings.Contains(id, "_account_") && strings.Contains(id, "_session_")
+	var identity struct {
+		DeviceID  string `json:"device_id"`
+		SessionID string `json:"session_id"`
+	}
+	return json.Unmarshal([]byte(id), &identity) == nil && identity.DeviceID != "" && identity.SessionID != ""
 }
 
 // renameConflictingTools renames tools that conflict with Claude Code built-in tools.
