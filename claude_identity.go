@@ -49,7 +49,7 @@ func injectClaudeCodeIdentity(body []byte, stableUserID string) []byte {
 	billingText := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli;", claudeCodeVersion, buildHash)
 	billingBlock := fmt.Sprintf(`{"type":"text","text":"%s"}`, billingText)
 
-	agentBlock := `{"type":"text","text":"You are a Claude agent, built on Anthropic's Claude Agent SDK.","cache_control":{"type":"ephemeral","ttl":"1h"}}`
+	agentBlock := `{"type":"text","text":"You are a Claude agent, built on Anthropic's Claude Agent SDK."}`
 
 	system := gjson.GetBytes(body, "system")
 	var newSystem string

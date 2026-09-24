@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 	"testing"
@@ -45,9 +46,6 @@ func TestClaudeCodeVersionIsConsistentAcrossIdentityHeaders(t *testing.T) {
 	if strings.Contains(billing, "cch=") {
 		t.Fatalf("billing identity contains removed cch field: %s", billing)
 	}
-	if got := gjson.GetBytes(body, "system.1.cache_control.ttl").String(); got != "1h" {
-		t.Fatalf("agent identity cache ttl = %q, want 1h", got)
-	}
 }
 
 func TestClaudeCodeHeadersForwardGatewayHints(t *testing.T) {
@@ -84,5 +82,24 @@ func TestClaudeCodeIdentityPreservesClientMetadata(t *testing.T) {
 	}
 	if !isValidClaudeUserID(gjson.GetBytes(body, "metadata.user_id").String()) {
 		t.Fatal("preserved current Claude Code user_id is invalid")
+	}
+}
+
+func TestClaudeCodeIdentityDoesNotAddCacheBreakpoint(t *testing.T) {
+	body := []byte(`{
+		"system":[
+			{"type":"text","text":"one","cache_control":{"type":"ephemeral"}},
+			{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}
+		],
+		"tools":[
+			{"name":"one","description":"one","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}},
+			{"name":"two","description":"two","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}
+		],
+		"messages":[]
+	}`)
+
+	got := injectClaudeCodeIdentity(body, generateClaudeUserID())
+	if count := bytes.Count(got, []byte(`"cache_control"`)); count != 4 {
+		t.Fatalf("cache_control count = %d, want existing 4", count)
 	}
 }
